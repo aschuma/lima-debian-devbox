@@ -1,9 +1,9 @@
 # Plan: project-scoped development on one reusable Lima VM
 
-Status: implemented in `lima-debian-ctl/` and verified against the real `devbox`
-VM (see the controller README for the covered scenarios); IntelliJ workflow
-verification remains pending. See that directory's README
-for the implemented command names and initial-version limitations.
+Status: implemented in `lima-debian-ctl/` and verified on the real `devbox`
+VM. IntelliJ Remote Development has not been exercised. The controller README
+documents the commands as built; this file records the requirements and the
+reasoning behind the design.
 
 ## Requirements
 

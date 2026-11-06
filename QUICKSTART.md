@@ -1,87 +1,55 @@
-# Quick start: project-scoped development with Lima
+# Quick start
 
-This setup uses an **existing Debian 12 ARM64 Lima VM** with an existing user,
-passwordless sudo, and `/usr/bin/python3`. It does not create or rebuild the VM.
-Only one project is active at a time; the guest disk and tools are reused.
+You need a running Debian 12 ARM64 Lima instance with a user that has
+passwordless sudo and `/usr/bin/python3`. Lima's Debian template gives you
+that. This guide assumes the instance is called `devbox` and the user is
+`aschuma`; set `LIMA_INSTANCE` and `LIMA_USER` if yours differ.
 
-## 1. Prepare host tools
-
-On an Apple Silicon Mac, one option is:
+## 1. Host tools
 
 ```bash
 brew install lima go ansible just
+limactl list            # devbox should be Running
 ```
 
-Go 1.23+ is required for building the controller, not for running a built binary.
-Python 3 and OpenSSH must also be available on the host. For optional local
-linting, install `shellcheck` and `uv`.
+Go 1.23+ is only needed to build the CLI. `shellcheck` and `uv` are optional,
+for `just lint`.
 
-Check the existing VM:
-
-```bash
-limactl list
-```
-
-If you do not already have a compatible VM, create one separately using Lima's
-Debian 12 configuration before continuing. Provisioning does not assume or
-require a shared host home. The default instance/user are `devbox`/`aschuma`;
-substitute your existing account as needed.
-
-## 2. Provision the base guest
-
-From the repository root:
+## 2. Provision the guest
 
 ```bash
 just deps
-
-# Optional overrides for an existing instance/account:
-export LIMA_INSTANCE=devbox
-export LIMA_USER=aschuma
-
 ./lima-debian-provision/provision.sh --preflight
 ./lima-debian-provision/provision.sh
 ```
 
-**The second command modifies the guest:** it installs base tools, Docker,
-mise runtimes/CLI tools (including Pi), shell configuration, and project-session
-helpers. Back up existing guest shell and mise customizations first.
+The last command changes the VM: apt packages, Docker, mise with the toolchain
+from `group_vars/all/tool_versions.yml`, zsh with Starship, and the helpers the
+controller needs. It overwrites `~/.zshenv`, `~/.zshrc` and
+`~/.config/starship.toml` in the guest — keep personal zsh settings in
+`~/.zshrc.local`.
 
-If base provisioning was already applied before the controller helpers existed,
-install just those helpers:
+Already provisioned before the controller existed? Install just the helpers:
 
 ```bash
 ./lima-debian-provision/provision.sh --tags project-session
 ```
 
-This installs environment loaders, an SSH execution helper, and a systemd
-shutdown/startup cleanup service. Its first start clears an existing
-controller-generated environment file, if present.
-
-Docker-group membership requires a fresh login/group context for old sessions.
-See the [base provisioning reference](lima-debian-provision/README.md).
-
-## 3. Install the controller
+## 3. Build the CLI
 
 ```bash
-just test
-just install
+just install            # go install → $(go env GOPATH)/bin/lima-debian-ctl
 lima-debian-ctl --help
 ```
 
-Ensure `$(go env GOPATH)/bin` is on PATH unless you configured `GOBIN`.
-Alternatively, `just build` writes `lima-debian-ctl/bin/lima-debian-ctl`.
-
-## 4. Configure a project
-
-In the project directory, not this repository unless it is the project you want
-to develop:
+## 4. Describe a project
 
 ```bash
-cd /path/to/project
+cd ~/Projects/service-a
 lima-debian-ctl init
 ```
 
-Edit `.devvm.toml`:
+This writes `.devvm.toml`. Edit it:
 
 ```toml
 schema_version = 1
@@ -93,83 +61,64 @@ host = "."
 guest = "/work/service-a"
 writable = true
 
-# Optional second folder, explicitly scoped to this project:
-[[mounts]]
-host = "../associated-library"
-guest = "/work/associated-library"
-writable = true
+[[mounts]]                       # optional, one more folder
+host = "../shared-lib"
+guest = "/work/shared-lib"
+writable = false
 
 [environment]
-resolver = ["./scripts/resolve-dev-env"]
+resolver = ["./scripts/dev-env"] # prints KEY=value lines
 timeout_seconds = 60
 ```
 
-The resolver runs on the host with the project directory as its working
-directory. It must emit UTF-8 literal `KEY=value` records on stdout (CR, LF, and
-CRLF accepted). Values may contain `=` and spaces; do not emit shell `export`
-prefixes, comments, or multiline values. The controller does not evaluate the
-raw output. Use an executable script or specify its interpreter explicitly.
-The resolver runs without a terminal and is killed at the timeout, so it must
-not prompt (unlock 1Password or sign in beforehand; the script only reads).
+The resolver is any program. It runs on the host, in the project directory,
+without a terminal, and must print one `KEY=value` per line (CR, LF or CRLF).
+Nothing is evaluated: the value is everything after the first `=`, verbatim.
+A typical resolver reads a 1Password item or an encrypted file. Unlock it
+beforehand; the script cannot prompt.
 
-Omit `resolver` if the project needs no environment variables. Keep secret values
-out of `.devvm.toml`, script arguments, and the project checkout. Review a
-project's resolver before running it: it executes host code.
+Leave `resolver` out if the project has no secrets. Port forwards are
+described in the [controller README](lima-debian-ctl/README.md#forwards).
 
-For port forwards, including guest access to a host SOCKS service, see the
-[controller configuration reference](lima-debian-ctl/README.md#configure-a-project).
+Commit `.devvm.toml`. It contains no secrets.
 
-## 5. Activate and develop
+## 5. Work
 
 ```bash
-lima-debian-ctl plan
-lima-debian-ctl activate
-lima-debian-ctl status
-lima-debian-ctl shell
-# Or run a command directly:
+lima-debian-ctl plan       # what activate would do; no changes
+lima-debian-ctl activate   # asks before stopping the VM or replacing mounts
+lima-debian-ctl shell      # login shell in /work/service-a with the env loaded
 lima-debian-ctl exec -- ./gradlew test
 ```
 
-Inspect the plan before approving. Activation asks for confirmation whenever it
-replaces the VM's mounts (even if the VM is stopped) or restarts it. It replaces the VM's
-configured mounts and automatic port forwards with the active project's scope.
-It can stop the VM and terminate open shells, IDE sessions, and containers.
-Only configured TCP tunnels are exposed, plus Lima's management SSH connection.
+Activation replaces the VM's mounts with the project's and stops Lima's
+automatic port forwarding; only the forwards in `.devvm.toml` are opened. If
+the VM is running with other mounts it is stopped and started again (about
+15 s). Anything running in the VM dies with it.
 
-Run any project mise setup manually inside the VM. The controller does not run
-mise install/trust/tasks or modify the project's mise configuration.
+Run `mise install` or whatever the project needs yourself, inside the shell.
 
-For IntelliJ Remote Development, activate first and start a fresh backend.
-Shell hooks cover common launch paths; if the IDE bypasses them, use an explicit
-environment-aware backend launch through `lima-debian-ctl exec`. The exact IDE
-workflow still needs a real integration test; do not assume an already-running
-backend adopts refreshed credentials.
+IntelliJ Remote Development: activate first, then start a fresh backend. The
+environment is loaded by login shells; if your backend is launched some other
+way, start it through `lima-debian-ctl exec -- ...`. A running backend or
+Gradle daemon keeps its old environment until you restart it.
 
-## 6. Refresh, switch, and stop
+## 6. Refresh, switch, stop
 
 ```bash
-# Same project: replace the environment file without restarting the VM.
-lima-debian-ctl provision
+lima-debian-ctl provision   # rerun the resolver, replace the env file; no restart
 
-# Another project: configure it and activate from its directory.
-cd /path/to/another-project
-lima-debian-ctl init
-# Edit .devvm.toml, then:
-lima-debian-ctl plan
-lima-debian-ctl activate
+cd ~/Projects/other
+lima-debian-ctl activate    # switch: stop, swap mounts, start, provision
 
-# Remove this project's environment/tunnels and stop the shared VM:
-lima-debian-ctl deactivate
+lima-debian-ctl deactivate  # delete the env file, close tunnels, stop the VM
 ```
 
-A project switch restarts the VM so old processes and mounts do not remain
-active. The disk, tool installations, caches, and Docker images/volumes survive.
+The env file lives on the guest disk at
+`~/.config/lima-debian-ctl/environment.sh`. It is deleted on `deactivate`, on
+a clean shutdown, and on the next boot after an unclean one. Processes that
+already read it keep their values until they exit.
 
-Credential files persist across SSH disconnects, but orderly guest shutdown
-removes them. An unclean stop can leave them on disk until startup cleanup.
-Existing processes retain inherited variables until restarted. Deleting a file
-is not secure erasure; snapshots/backups can preserve it.
-
-If activation fails, inspect `status`, resolve the reported problem, and retry
-`activate --yes` after reviewing `plan`. A project is not reported ready until
-mounts, credentials, and tunnels have passed their checks.
+If `activate` fails halfway, `status` says why. Fix the cause and run
+`activate` again; nothing is marked ready until mounts, env and tunnels all
+check out.
