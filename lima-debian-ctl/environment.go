@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -9,41 +10,56 @@ import (
 	"unicode/utf8"
 )
 
+// environmentLimit caps resolver output; credentials are small.
 const environmentLimit = 1 << 20
 
+// projectMarkerVar names the controller's own marker exported with the environment.
+const projectMarkerVar = "LIMA_DEBIAN_CTL_PROJECT"
+
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// reservedEnvNames would change how the loader shells themselves behave or are
+// read-only in bash/zsh; exporting them from the generated file is refused.
 var reservedEnvNames = map[string]bool{
-	"HOME": true, "BASH_ENV": true, "ENV": true, "ZDOTDIR": true,
-	"IFS": true, "SHELLOPTS": true, "BASHOPTS": true,
-	"UID": true, "EUID": true, "PPID": true, "BASH_VERSINFO": true,
-	"status": true, "pipestatus": true,
+	"HOME": true, "BASH_ENV": true, "ENV": true, "ZDOTDIR": true, "IFS": true,
+	"SHELLOPTS": true, "BASHOPTS": true, "UID": true, "EUID": true, "PPID": true,
+	"BASH_VERSINFO": true, "status": true, "pipestatus": true,
 }
 
+// parseEnvironment reads literal KEY=value records separated by CR, LF or
+// CRLF. Errors report line numbers only, never record contents.
 func parseEnvironment(text string) (map[string]string, error) {
 	if len(text) > environmentLimit || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return nil, fmt.Errorf("resolver output must be UTF-8, NUL-free, and at most 1 MiB")
+		return nil, errors.New("resolver output must be UTF-8, NUL-free, and at most 1 MiB")
 	}
-	normalized := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	env := map[string]string{}
+	normalized := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
+	env := make(map[string]string)
 	for i, line := range strings.Split(normalized, "\n") {
 		if line == "" {
 			continue
 		}
 		key, val, ok := strings.Cut(line, "=")
-		if !ok || !envName.MatchString(key) {
+		switch {
+		case !ok || !envName.MatchString(key):
 			return nil, fmt.Errorf("invalid environment record on line %d", i+1)
-		}
-		if strings.HasPrefix(key, "LIMA_DEBIAN_CTL_") || reservedEnvNames[key] {
+		case strings.HasPrefix(key, "LIMA_DEBIAN_CTL_") || reservedEnvNames[key]:
 			return nil, fmt.Errorf("reserved environment name on line %d", i+1)
 		}
-		if _, exists := env[key]; exists {
+		if _, dup := env[key]; dup {
 			return nil, fmt.Errorf("duplicate environment name on line %d", i+1)
 		}
 		env[key] = val
 	}
 	return env, nil
 }
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+
+// shellQuote single-quotes s for POSIX shells; the result is always literal.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// renderEnvironment produces the guest environment file: sorted exports plus
+// the project marker that readiness checks and exec verify against.
 func renderEnvironment(env map[string]string, project string) string {
 	keys := make([]string, 0, len(env))
 	for key := range env {
@@ -55,16 +71,20 @@ func renderEnvironment(env map[string]string, project string) string {
 	for _, key := range keys {
 		fmt.Fprintf(&b, "export %s=%s\n", key, shellQuote(env[key]))
 	}
-	fmt.Fprintf(&b, "export LIMA_DEBIAN_CTL_PROJECT=%s\n", shellQuote(project))
+	fmt.Fprintf(&b, "export %s=%s\n", projectMarkerVar, shellQuote(project))
 	return b.String()
 }
+
+// resolveEnvironment runs the project's resolver on the host and renders its
+// output. Resolver stdout/stderr are withheld from errors.
 func resolveEnvironment(ctx context.Context, r Runner, c Config) (string, error) {
-	if len(c.Environment.Resolver) == 0 {
+	resolver := c.Environment.Resolver
+	if len(resolver) == 0 {
 		return renderEnvironment(nil, c.Project), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.resolverTimeout())
 	defer cancel()
-	text, err := checked(ctx, r, Command{Name: c.Environment.Resolver[0], Args: c.Environment.Resolver[1:], Dir: c.Root, Limit: environmentLimit})
+	text, err := run(ctx, r, Command{Name: resolver[0], Args: resolver[1:], Dir: c.Root, Limit: environmentLimit})
 	if err != nil {
 		return "", fmt.Errorf("credential resolver failed (output withheld): %w", err)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -18,7 +19,8 @@ func TestTunnelsUseDedicatedSocketAndLoopback(t *testing.T) {
 		}
 		return Result{}, nil
 	})
-	if err := startTunnels(context.Background(), runner, f.inst, c, a.Store.Socket); err != nil {
+	tn := tunnels{r: runner, inst: f.inst, socket: a.Store.Socket}
+	if err := tn.Start(context.Background(), c.Forwards); err != nil {
 		t.Fatal(err)
 	}
 	if len(calls) != 3 {
@@ -39,7 +41,7 @@ func TestTunnelsUseDedicatedSocketAndLoopback(t *testing.T) {
 	if err := os.WriteFile(a.Store.Socket, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := stopTunnels(context.Background(), runner, f.inst, a.Store.Socket); err != nil {
+	if err := tn.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(a.Store.Socket); !os.IsNotExist(err) {
@@ -47,13 +49,25 @@ func TestTunnelsUseDedicatedSocketAndLoopback(t *testing.T) {
 	}
 }
 func TestForwardPolicyRecognizesExpandedLimaDefaults(t *testing.T) {
-	var inst Instance
-	inst.Config.PortForwards = []map[string]any{{"guestIP": "0.0.0.0", "ignore": true, "proto": "any", "guestPortRange": []any{float64(1), float64(65535)}, "hostIP": "127.0.0.1", "hostPortRange": []any{float64(1), float64(65535)}}}
-	if !hasManagedForwardPolicy(inst) {
+	// Exactly what Lima 2.2.1 reports after filling defaults for the managed rule.
+	expanded := `{"guestIPMustBeZero":false,"guestIP":"0.0.0.0","guestPortRange":[1,65535],"hostIP":"127.0.0.1","hostPortRange":[1,65535],"proto":"any","ignore":true}`
+	var rule portForward
+	if err := json.Unmarshal([]byte(expanded), &rule); err != nil {
+		t.Fatal(err)
+	}
+	if !rule.isIgnoreAll() {
 		t.Fatal("expanded defaults caused false config drift")
 	}
-	inst.Config.PortForwards[0]["guestIPMustBeZero"] = true
-	if hasManagedForwardPolicy(inst) {
-		t.Fatal("partial ignore rule accepted")
+	yes := true
+	rule.GuestIPMustBeZero = &yes
+	if rule.isIgnoreAll() {
+		t.Fatal("rule that only ignores 0.0.0.0-bound ports was accepted")
+	}
+	var unset portForward
+	if err := json.Unmarshal([]byte(`{"guestIP":"0.0.0.0","proto":"any","ignore":true}`), &unset); err != nil {
+		t.Fatal(err)
+	}
+	if !unset.isIgnoreAll() {
+		t.Fatal("rule as written in lima.yaml not recognised")
 	}
 }

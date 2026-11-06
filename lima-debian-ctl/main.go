@@ -16,6 +16,63 @@ import (
 	"time"
 )
 
+const (
+	exitUsage      = 2
+	commandTimeout = 15 * time.Minute
+)
+
+const usage = `Usage: lima-debian-ctl COMMAND [--config FILE] [--json] [--yes] [-- COMMAND...]
+
+Commands:
+  init        write a .devvm.toml stub in the current directory
+  plan        show what activate would change (no VM changes, no resolver run)
+  activate    make this project the VM's active project (may stop/restart it)
+  provision   refresh this project's environment without restarting
+  status      report readiness; never prints environment values
+  shell       open a login shell in the project directory
+  exec        run a command in the project directory: exec -- CMD [ARG...]
+  deactivate  remove credentials and tunnels, then stop the VM
+  stop        alias of deactivate
+
+Configuration is .devvm.toml, searched upward from the current directory.
+Project mise setup is never run.
+`
+
+// cliOptions are the flags shared by every command.
+type cliOptions struct {
+	config string
+	json   bool
+	yes    bool
+}
+
+// cli bundles what command handlers need.
+type cli struct {
+	ctx        context.Context
+	opts       cliOptions
+	args       []string // positional arguments (exec only)
+	controller Controller
+	config     Config
+	out        io.Writer
+}
+
+// handler runs one command and returns the process exit code.
+type handler func(*cli) (int, error)
+
+// commands maps names to handlers and declares which take the mutation lock.
+var commands = map[string]struct {
+	run   handler
+	mutex bool
+}{
+	"plan":       {run: (*cli).plan},
+	"status":     {run: (*cli).status},
+	"shell":      {run: (*cli).shell},
+	"exec":       {run: (*cli).exec},
+	"activate":   {run: (*cli).activate, mutex: true},
+	"provision":  {run: (*cli).provision, mutex: true},
+	"deactivate": {run: (*cli).stop, mutex: true},
+	"stop":       {run: (*cli).stop, mutex: true},
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -28,41 +85,44 @@ func main() {
 	}
 	os.Exit(code)
 }
+
 func runCLI(ctx context.Context, args []string, runner Runner, out, stderr io.Writer) (int, error) {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(out, "Usage: lima-debian-ctl COMMAND [--config FILE] [--json] [--yes] [-- COMMAND...]\n\nCommands: init, plan, activate, provision, status, shell, exec, deactivate, stop\nConfiguration: .devvm.toml (searched upward from the current directory).\nProject mise setup is never run. activate may stop/restart the VM.")
+		fmt.Fprint(out, usage)
 		return 0, nil
 	}
-	command := args[0]
-	switch command {
-	case "init", "plan", "activate", "provision", "status", "shell", "exec", "deactivate", "stop":
-	default:
-		return 2, fmt.Errorf("unknown command %q", command)
+	name := args[0]
+	spec, known := commands[name]
+	if !known && name != "init" {
+		return exitUsage, fmt.Errorf("unknown command %q", name)
 	}
-	flags := flag.NewFlagSet(command, flag.ContinueOnError)
+
+	var opts cliOptions
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	filename := flags.String("config", "", "project configuration file")
-	asJSON := flags.Bool("json", false, "non-secret JSON output (not for shell/exec)")
-	yes := flags.Bool("yes", false, "approve project takeover/restart without prompting")
+	flags.StringVar(&opts.config, "config", "", "project configuration file")
+	flags.BoolVar(&opts.json, "json", false, "non-secret JSON output (not for shell/exec)")
+	flags.BoolVar(&opts.yes, "yes", false, "approve mount replacement/restart without prompting")
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
 		}
-		return 2, err
+		return exitUsage, err
 	}
-	if command != "exec" && flags.NArg() != 0 {
-		return 2, fmt.Errorf("unexpected positional arguments")
+	isSession := name == "shell" || name == "exec"
+	switch {
+	case name != "exec" && flags.NArg() != 0:
+		return exitUsage, errors.New("unexpected positional arguments")
+	case isSession && opts.json:
+		return exitUsage, errors.New("shell/exec use native terminal output, not --json")
+	case name == "exec" && flags.NArg() == 0:
+		return exitUsage, errors.New("exec requires -- COMMAND [ARG...]")
 	}
-	if (command == "exec" || command == "shell") && *asJSON {
-		return 2, fmt.Errorf("shell/exec use native terminal output, not --json")
+	if name == "init" {
+		return 0, initConfig(opts.config, out)
 	}
-	if command == "exec" && flags.NArg() == 0 {
-		return 2, fmt.Errorf("exec requires -- COMMAND [ARG...]")
-	}
-	if command == "init" {
-		return 0, initConfig(*filename, out)
-	}
-	c, err := loadConfig(*filename)
+
+	c, err := loadConfig(opts.config)
 	if err != nil {
 		return 1, err
 	}
@@ -70,84 +130,138 @@ func runCLI(ctx context.Context, args []string, runner Runner, out, stderr io.Wr
 	if err != nil {
 		return 1, err
 	}
-	controller := Controller{Runner: runner, Store: store}
-	if command == "shell" || command == "exec" {
-		// ssh -t forwards Ctrl-C to the remote; the host process must not act on it.
-		signal.Ignore(os.Interrupt)
-		return controller.Session(ctx, c, flags.Args(), command == "shell")
+	if !isSession {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, commandTimeout)
+		defer cancel()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-	defer cancel()
-	emit := func(v any) (int, error) {
-		if *asJSON {
-			return 0, json.NewEncoder(out).Encode(v)
-		}
-		b, err := json.MarshalIndent(v, "", "  ")
+	if spec.mutex {
+		unlock, err := store.lock()
 		if err != nil {
 			return 1, err
 		}
-		fmt.Fprintln(out, string(b))
-		return 0, nil
+		defer unlock()
 	}
-	if command == "plan" {
-		rec, err := controller.plan(ctx, c)
-		if err != nil {
-			return 1, err
-		}
-		return emit(rec.Plan)
+	return spec.run(&cli{
+		ctx:        ctx,
+		opts:       opts,
+		args:       flags.Args(),
+		controller: Controller{Runner: runner, Store: store},
+		config:     c,
+		out:        out,
+	})
+}
+
+// emit prints a non-secret result as JSON (compact with --json, indented otherwise).
+func (k *cli) emit(v any) (int, error) {
+	enc := json.NewEncoder(k.out)
+	if !k.opts.json {
+		enc.SetIndent("", "  ")
 	}
-	if command == "status" {
-		s, err := controller.Status(ctx, c)
-		if err != nil {
-			return 1, err
-		}
-		return emit(s)
-	}
-	unlock, err := store.lock()
+	return 0, enc.Encode(v)
+}
+
+func (k *cli) plan() (int, error) {
+	rec, err := k.controller.plan(k.ctx, k.config)
 	if err != nil {
 		return 1, err
 	}
-	defer unlock()
-	switch command {
-	case "activate":
-		rec, err := controller.plan(ctx, c)
-		if err != nil {
-			return 1, err
-		}
-		if rec.Plan.ConfirmationRequired && !*yes {
-			if *asJSON {
-				return 1, fmt.Errorf("activation requires --yes; inspect plan first")
-			}
-			if !stdinIsTerminal() {
-				return 1, fmt.Errorf("activation requires --yes in non-interactive use; inspect plan first")
-			}
-			_, _ = emit(rec.Plan)
-			fmt.Fprint(out, "This replaces the VM's mounts/automatic forwarding and may stop the VM and its sessions. Continue? [y/N] ")
-			answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-			if strings.ToLower(strings.TrimSpace(answer)) != "y" {
-				return 1, fmt.Errorf("activation cancelled")
-			}
-			*yes = true
-		}
-		state, err := controller.Activate(ctx, c, rec, *yes)
-		if err != nil {
-			return 1, err
-		}
-		return emit(state)
-	case "provision":
-		if err := controller.Provision(ctx, c); err != nil {
-			return 1, err
-		}
-		return emit(map[string]string{"project": c.Project, "environment": "refreshed; existing processes must restart to inherit changes"})
-	case "stop", "deactivate":
-		state, err := controller.Stop(ctx, c)
-		if err != nil {
-			return 1, err
-		}
-		return emit(state)
-	}
-	return 2, fmt.Errorf("unsupported command")
+	return k.emit(rec.Plan)
 }
+
+func (k *cli) status() (int, error) {
+	s, err := k.controller.Status(k.ctx, k.config)
+	if err != nil {
+		return 1, err
+	}
+	return k.emit(s)
+}
+
+func (k *cli) shell() (int, error) { return k.session(nil, true) }
+func (k *cli) exec() (int, error)  { return k.session(k.args, false) }
+
+func (k *cli) session(command []string, shell bool) (int, error) {
+	// ssh -t forwards Ctrl-C to the remote; the host process must not act on it.
+	signal.Ignore(os.Interrupt)
+	return k.controller.Session(k.ctx, k.config, command, shell)
+}
+
+func (k *cli) activate() (int, error) {
+	rec, err := k.controller.plan(k.ctx, k.config)
+	if err != nil {
+		return 1, err
+	}
+	approved := k.opts.yes
+	if rec.Plan.ConfirmationRequired && !approved {
+		if approved, err = k.confirm(rec.Plan); err != nil {
+			return 1, err
+		}
+	}
+	state, err := k.controller.Activate(k.ctx, k.config, rec, approved)
+	if err != nil {
+		return 1, err
+	}
+	return k.emit(state)
+}
+
+// confirm shows the plan and asks on a terminal; non-interactive use must pass --yes.
+func (k *cli) confirm(p Plan) (bool, error) {
+	if k.opts.json {
+		return false, errors.New("activation requires --yes; inspect plan first")
+	}
+	if !stdinIsTerminal() {
+		return false, errors.New("activation requires --yes in non-interactive use; inspect plan first")
+	}
+	_, _ = k.emit(p)
+	fmt.Fprint(k.out, "This replaces the VM's mounts/automatic forwarding and may stop the VM and its sessions. Continue? [y/N] ")
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		return false, errors.New("activation cancelled")
+	}
+	return true, nil
+}
+
+func (k *cli) provision() (int, error) {
+	if err := k.controller.Provision(k.ctx, k.config); err != nil {
+		return 1, err
+	}
+	return k.emit(map[string]string{
+		"project":     k.config.Project,
+		"environment": "refreshed; existing processes must restart to inherit changes",
+	})
+}
+
+func (k *cli) stop() (int, error) {
+	state, err := k.controller.Stop(k.ctx, k.config)
+	if err != nil {
+		return 1, err
+	}
+	return k.emit(state)
+}
+
+const configTemplate = `schema_version = 1
+project = %s
+instance = %q
+
+[[mounts]]
+host = "."
+guest = %s
+writable = true
+
+[environment]
+# Runs on the host from this directory without a terminal.
+# Output: literal KEY=value records (CR, LF or CRLF separated).
+# resolver = ["./scripts/resolve-dev-env"]
+timeout_seconds = %d
+
+# [[forwards]]
+# direction = "guest-to-host"
+# listen_port = 1080
+# target_host = "127.0.0.1"
+# target_port = 1080
+`
+
+// initConfig writes a fresh .devvm.toml and refuses to overwrite one.
 func initConfig(filename string, out io.Writer) error {
 	if filename == "" {
 		filename = configName
@@ -160,18 +274,17 @@ func initConfig(filename string, out io.Writer) error {
 	if !identifier.MatchString(name) {
 		name = "my-project"
 	}
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	text := fmt.Sprintf(configTemplate, jsonString(name), defaultInstance, jsonString(guestMountRoot+name), defaultTimeoutSecs)
+	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	text := fmt.Sprintf("schema_version = 1\nproject = %s\ninstance = \"devbox\"\n\n[[mounts]]\nhost = \".\"\nguest = %s\nwritable = true\n\n[environment]\n# Runs on the host from this directory. Output: literal KEY=value records.\n# resolver = [\"./scripts/resolve-dev-env\"]\ntimeout_seconds = 60\n\n# [[forwards]]\n# direction = \"guest-to-host\"\n# listen_port = 1080\n# target_host = \"127.0.0.1\"\n# target_port = 1080\n", jsonString(name), jsonString("/work/"+name))
-	_, writeErr := f.WriteString(text)
-	closeErr := f.Close()
-	if writeErr != nil {
-		return writeErr
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		return err
 	}
-	if closeErr != nil {
-		return closeErr
+	if err := f.Close(); err != nil {
+		return err
 	}
 	fmt.Fprintln(out, "Created", abs)
 	return nil

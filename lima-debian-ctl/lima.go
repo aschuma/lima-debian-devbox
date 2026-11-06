@@ -3,52 +3,77 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
+// Lima instance states as reported by `limactl list --json`.
+const (
+	statusRunning = "Running"
+	statusStopped = "Stopped"
+)
+
+const sshReadyTimeout = 3 * time.Minute
+
+// Instance is the subset of Lima's instance metadata the controller uses.
 type Instance struct {
-	Name          string `json:"name"`
-	Hostname      string `json:"hostname"`
-	Status        string `json:"status"`
-	Dir           string `json:"dir"`
-	SSHConfigFile string `json:"sshConfigFile"`
-	Config        struct {
-		Mounts       []Mount          `json:"mounts"`
-		PortForwards []map[string]any `json:"portForwards"`
-	} `json:"config"`
+	Name          string         `json:"name"`
+	Hostname      string         `json:"hostname"`
+	Status        string         `json:"status"`
+	Dir           string         `json:"dir"`
+	SSHConfigFile string         `json:"sshConfigFile"`
+	Config        instanceConfig `json:"config"`
 }
 
-func discover(ctx context.Context, r Runner, name string) (Instance, error) {
-	text, err := checked(ctx, r, Command{Name: "limactl", Args: []string{"list", "--json"}})
-	if err != nil {
-		return Instance{}, err
-	}
-	dec := json.NewDecoder(strings.NewReader(text))
-	for {
-		var inst Instance
-		if err := dec.Decode(&inst); err == io.EOF {
-			break
-		} else if err != nil {
-			return inst, fmt.Errorf("invalid Lima metadata: %w", err)
-		}
-		if inst.Name == name {
-			if inst.Hostname == "" || inst.Dir == "" || inst.SSHConfigFile == "" || strings.HasPrefix(inst.Hostname, "-") || strings.ContainsAny(inst.Hostname, "\x00\r\n ") {
-				return inst, fmt.Errorf("incomplete Lima SSH metadata")
-			}
-			return inst, nil
-		}
-	}
-	return Instance{}, fmt.Errorf("lima instance %q does not exist; create/provision it separately", name)
+type instanceConfig struct {
+	Mounts       []Mount       `json:"mounts"`
+	PortForwards []portForward `json:"portForwards"`
 }
-func ignoreForwards() []map[string]any {
-	// guestIPMustBeZero must be explicit: Lima defaults it to true for 0.0.0.0,
-	// which would leave loopback-bound guest ports auto-forwarded.
-	return []map[string]any{{"guestIP": "0.0.0.0", "guestIPMustBeZero": false, "proto": "any", "ignore": true}}
+
+// portForward mirrors the Lima rule fields needed to recognise the managed
+// "ignore everything" policy. Pointers distinguish "unset" from "false".
+type portForward struct {
+	GuestIP           string `json:"guestIP,omitempty"`
+	GuestIPMustBeZero *bool  `json:"guestIPMustBeZero,omitempty"`
+	GuestPort         int    `json:"guestPort,omitempty"`
+	GuestPortRange    []int  `json:"guestPortRange,omitempty"`
+	GuestSocket       string `json:"guestSocket,omitempty"`
+	Proto             string `json:"proto,omitempty"`
+	Ignore            bool   `json:"ignore,omitempty"`
 }
+
+// ignoreAllForwards disables Lima's automatic guest-port forwarding so only
+// the project's explicit tunnels (and Lima's own SSH port) are exposed.
+// guestIPMustBeZero must be explicit: Lima defaults it to true for 0.0.0.0,
+// which would leave loopback-bound guest ports auto-forwarded.
+func ignoreAllForwards() []portForward {
+	no := false
+	return []portForward{{GuestIP: "0.0.0.0", GuestIPMustBeZero: &no, Proto: "any", Ignore: true}}
+}
+
+// isIgnoreAll recognises ignoreAllForwards after Lima has filled in defaults.
+func (p portForward) isIgnoreAll() bool {
+	if !p.Ignore || p.GuestIP != "0.0.0.0" || p.Proto != "any" || p.GuestSocket != "" || p.GuestPort != 0 {
+		return false
+	}
+	if p.GuestIPMustBeZero != nil && *p.GuestIPMustBeZero {
+		return false
+	}
+	return len(p.GuestPortRange) == 0 || (len(p.GuestPortRange) == 2 && p.GuestPortRange[0] == 1 && p.GuestPortRange[1] == maxPort)
+}
+
+// matchesProject reports whether the instance already carries exactly the
+// project's mounts and the managed forwarding policy.
+func (i Instance) matchesProject(c Config) bool {
+	return mountsEqual(i.Config.Mounts, c.Mounts) &&
+		len(i.Config.PortForwards) == 1 && i.Config.PortForwards[0].isIgnoreAll()
+}
+
 func mountsEqual(a, b []Mount) bool {
 	if len(a) != len(b) {
 		return false
@@ -60,38 +85,63 @@ func mountsEqual(a, b []Mount) bool {
 	}
 	return true
 }
-func hasManagedForwardPolicy(i Instance) bool {
-	// Lima's metadata expands defaults; compare semantics, not raw JSON.
-	if len(i.Config.PortForwards) != 1 {
-		return false
-	}
-	rule := i.Config.PortForwards[0]
-	if rule["ignore"] != true || rule["guestIP"] != "0.0.0.0" || rule["proto"] != "any" || rule["guestIPMustBeZero"] == true {
-		return false
-	}
-	if port, ok := rule["guestPort"]; ok && port != float64(0) && port != 0 {
-		return false
-	}
-	if socket, ok := rule["guestSocket"]; ok && socket != "" {
-		return false
-	}
-	if ports, ok := rule["guestPortRange"].([]any); ok {
-		return len(ports) == 2 && ports[0] == float64(1) && ports[1] == float64(65535)
-	}
-	return true
-}
-func editInstance(ctx context.Context, r Runner, c Config) error {
-	expr := ".mounts = " + jsonString(c.Mounts) + " | .portForwards = " + jsonString(ignoreForwards())
-	_, err := checked(ctx, r, Command{Name: "limactl", Args: []string{"edit", "--tty=false", "--set", expr, c.Instance}})
+
+// limaClient wraps the limactl subcommands the controller needs.
+type limaClient struct{ r Runner }
+
+func (l limaClient) run(ctx context.Context, args ...string) error {
+	_, err := run(ctx, l.r, Command{Name: "limactl", Args: args})
 	return err
 }
-func waitInstance(ctx context.Context, r Runner, name string) (Instance, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+
+func (l limaClient) Stop(ctx context.Context, name string) error {
+	return l.run(ctx, "stop", "--tty=false", name)
+}
+
+func (l limaClient) Start(ctx context.Context, name string) error {
+	return l.run(ctx, "start", "--tty=false", name)
+}
+
+// Edit replaces the instance's mounts and forwarding policy. Lima refuses to
+// edit a running instance, so callers stop it first.
+func (l limaClient) Edit(ctx context.Context, c Config) error {
+	expr := ".mounts = " + jsonString(c.Mounts) + " | .portForwards = " + jsonString(ignoreAllForwards())
+	return l.run(ctx, "edit", "--tty=false", "--set", expr, c.Instance)
+}
+
+// Discover returns the named instance from `limactl list --json`.
+func (l limaClient) Discover(ctx context.Context, name string) (Instance, error) {
+	text, err := run(ctx, l.r, Command{Name: "limactl", Args: []string{"list", "--json"}})
+	if err != nil {
+		return Instance{}, err
+	}
+	dec := json.NewDecoder(strings.NewReader(text))
+	for {
+		var inst Instance
+		if err := dec.Decode(&inst); errors.Is(err, io.EOF) {
+			return Instance{}, fmt.Errorf("lima instance %q does not exist; create/provision it separately", name)
+		} else if err != nil {
+			return Instance{}, fmt.Errorf("invalid Lima metadata: %w", err)
+		}
+		if inst.Name != name {
+			continue
+		}
+		if inst.Hostname == "" || inst.Dir == "" || inst.SSHConfigFile == "" ||
+			strings.HasPrefix(inst.Hostname, "-") || strings.ContainsAny(inst.Hostname, "\x00\r\n ") {
+			return inst, errors.New("incomplete Lima SSH metadata")
+		}
+		return inst, nil
+	}
+}
+
+// WaitReady polls until the instance is running and accepts SSH.
+func (l limaClient) WaitReady(ctx context.Context, name string) (Instance, error) {
+	ctx, cancel := context.WithTimeout(ctx, sshReadyTimeout)
 	defer cancel()
 	for {
-		inst, err := discover(ctx, r, name)
-		if err == nil && inst.Status == "Running" {
-			if _, err := sshScript(ctx, r, inst, "true", ""); err == nil {
+		inst, err := l.Discover(ctx, name)
+		if err == nil && inst.Status == statusRunning {
+			if _, err := newGuest(l.r, inst).bash(ctx, "true", ""); err == nil {
 				return inst, nil
 			}
 		}
@@ -102,55 +152,10 @@ func waitInstance(ctx context.Context, r Runner, name string) (Instance, error) 
 		}
 	}
 }
-func sshArgs(i Instance) []string {
-	// -S none prevents reuse of Lima's existing master (including old group/env state).
-	return []string{"-F", i.SSHConfigFile, "-S", "none", "-o", "ControlMaster=no", "-o", "ClearAllForwardings=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"}
-}
-func sshScript(ctx context.Context, r Runner, i Instance, script, input string) (string, error) {
-	args := append(sshArgs(i), i.Hostname, "/bin/bash --noprofile --norc -c "+shellQuote(script))
-	return checked(ctx, r, Command{Name: "ssh", Args: args, Input: input})
-}
-func requireGuestHelpers(ctx context.Context, r Runner, i Instance) (string, error) {
-	// The helper uses the account database, not a possibly overridden HOME.
-	return sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest check", "")
-}
-func provisionGuest(ctx context.Context, r Runner, i Instance, payload string) error {
-	_, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest provision", payload)
-	return err
-}
-func clearGuest(ctx context.Context, r Runner, i Instance) error {
-	_, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest clear", "")
-	return err
-}
 
-// pruneMounts removes empty, unmounted leftover directories under /work.
-func pruneMounts(ctx context.Context, r Runner, i Instance) error {
-	_, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest prune-mounts", "")
-	return err
-}
-func guestProject(ctx context.Context, r Runner, i Instance) (string, error) {
-	text, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest status", "")
-	return strings.TrimSpace(text), err
-}
-
-// loaderProbe exercises the real login-shell startup path rather than the
-// helper's direct sourcing, so readiness reflects what IDE/SSH launches see.
-func loaderProbe(ctx context.Context, r Runner, i Instance) (string, error) {
-	args := append(sshArgs(i), i.Hostname, "/bin/bash -lc 'printf %s \"$LIMA_DEBIAN_CTL_PROJECT\"'")
-	text, err := checked(ctx, r, Command{Name: "ssh", Args: args})
-	return strings.TrimSpace(text), err
-}
-
-// guestListening reports whether the guest has a TCP listener on the port.
-// sshd only warns when a -R listener cannot bind, so this is checked explicitly.
-func guestListening(ctx context.Context, r Runner, i Instance, port int) bool {
-	script := fmt.Sprintf("/usr/bin/ss -Hltn 'sport = :%d' | /usr/bin/grep -q .", port)
-	_, err := sshScript(ctx, r, i, script, "")
-	return err == nil
-}
-
-func backupConfig(i Instance, dest string) error {
-	data, err := os.ReadFile(i.Dir + "/lima.yaml")
+// BackupConfig copies the instance's lima.yaml verbatim before an edit.
+func (l limaClient) BackupConfig(inst Instance, dest string) error {
+	data, err := os.ReadFile(filepath.Join(inst.Dir, "lima.yaml"))
 	if err != nil {
 		return fmt.Errorf("back up Lima config: %w", err)
 	}
