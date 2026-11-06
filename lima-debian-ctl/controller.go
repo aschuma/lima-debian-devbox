@@ -136,6 +136,8 @@ func (a Controller) Activate(ctx context.Context, c Config, rec Reconciliation, 
 		return state, fmt.Errorf("guest helpers unavailable; apply Ansible --tags project-session first: %w", helperErr)
 	}
 	state.BootID = strings.TrimSpace(boot)
+	// Cosmetic, best effort: stale mountpoint directories from previous projects.
+	_ = pruneMounts(ctx, a.Runner, inst)
 	if err = provisionGuest(ctx, a.Runner, inst, payload); err != nil {
 		return state, err
 	}
@@ -169,8 +171,13 @@ func (a Controller) requireActive(ctx context.Context, c Config) (Instance, Stat
 	if err != nil {
 		return Instance{}, state, err
 	}
-	if state.Project != c.Project || state.Root != c.Root || state.ConfigHash != configHash(c) || state.Phase != "ready" {
-		return Instance{}, state, fmt.Errorf("this project/configuration is not ready (phase %q); run activate", state.Phase)
+	switch {
+	case state.Project != c.Project || state.Root != c.Root:
+		return Instance{}, state, fmt.Errorf("active project is %q, not %q; run activate here to switch", state.Project, c.Project)
+	case state.ConfigHash != configHash(c):
+		return Instance{}, state, fmt.Errorf("project configuration changed since activation; run activate")
+	case state.Phase != "ready":
+		return Instance{}, state, fmt.Errorf("project is not ready (phase %q); run activate", state.Phase)
 	}
 	inst, err := discover(ctx, a.Runner, c.Instance)
 	if err != nil {

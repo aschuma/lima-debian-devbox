@@ -35,6 +35,17 @@ case "${1:-}" in
     clear)
         /usr/bin/rm -f "$LIMA_DEBIAN_CTL_FILE" "$LIMA_DEBIAN_CTL_DIR"/.environment.*
         ;;
+    prune-mounts)
+        # Lima leaves empty mountpoint directories behind after a mount is
+        # removed. Drop empty, unmounted entries directly under /work.
+        for dir in /work/*/; do
+            dir=${dir%/}
+            [[ -d "$dir" ]] || continue
+            /usr/bin/findmnt -rn --target "$dir" --output TARGET | /usr/bin/grep -qx "$dir" && continue
+            [[ -z "$(/usr/bin/find "$dir" -mindepth 1 -maxdepth 1 -print -quit)" ]] || continue
+            /usr/bin/sudo -n /usr/bin/rmdir -- "$dir" || exit 1
+        done
+        ;;
     status)
         check >/dev/null
         [[ -r "$LIMA_DEBIAN_CTL_FILE" ]] || exit 1
@@ -62,7 +73,7 @@ case "${1:-}" in
         exec -- "$@"
         ;;
     *)
-        printf 'Usage: lima-debian-ctl-guest check|provision|clear|status|exec PROJECT DIR COMMAND...\n' >&2
+        printf 'Usage: lima-debian-ctl-guest check|provision|clear|prune-mounts|status|exec PROJECT DIR COMMAND...\n' >&2
         exit 2
         ;;
 esac

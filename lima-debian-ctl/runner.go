@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type Command struct {
@@ -50,8 +52,9 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 func stdinIsTerminal() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	// ModeCharDevice is also true for /dev/null; ask the kernel for termios.
+	_, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), ioctlGetTermios)
+	return err == nil
 }
 
 func (ProcessRunner) Run(ctx context.Context, c Command) (Result, error) {

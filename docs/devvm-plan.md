@@ -1,7 +1,8 @@
 # Plan: project-scoped development on one reusable Lima VM
 
-Status: Go implementation added in `lima-debian-ctl/`; real-VM acceptance checks
-and IntelliJ workflow verification remain pending. See that directory's README
+Status: implemented in `lima-debian-ctl/` and verified against the real `devbox`
+VM (see the controller README for the covered scenarios); IntelliJ workflow
+verification remains pending. See that directory's README
 for the implemented command names and initial-version limitations.
 
 ## Requirements

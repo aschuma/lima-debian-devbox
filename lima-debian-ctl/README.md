@@ -9,10 +9,14 @@ runtime dependency is `github.com/pelletier/go-toml/v2` for TOML decoding.
 Supports macOS/Linux hosts with Go 1.23+ for building; the built binary requires
 no Go installation. Base guest provisioning lives in `../lima-debian-provision/`.
 
-**Initial implementation:** automated tests cover orchestration with a fake
-VM, and the mount-edit expression has been checked against a temporary Lima
-configuration using Lima 2.2.1. Actual project switching, guest shutdown cleanup,
-and your IntelliJ launch workflow still require an explicit real-VM test.
+**Validation status:** automated tests cover orchestration with a fake VM.
+A real-VM acceptance run on Lima 2.2.1 verified: takeover and project switch
+(stop/edit/start, ~12-15 s), exclusive mounts incl. read-only, literal
+credential values via `exec`, plain `bash -l` and `zsh -c`, exit-code
+propagation, guest-to-host tunnel traffic, config-change detection, same-project
+refresh without restart, deactivate, and credential removal by the guest systemd
+service on both controller-driven and plain `limactl stop`. The IntelliJ
+Remote Development launch path has not been exercised yet.
 
 ## Install and prepare the guest
 

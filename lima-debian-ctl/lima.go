@@ -45,7 +45,9 @@ func discover(ctx context.Context, r Runner, name string) (Instance, error) {
 	return Instance{}, fmt.Errorf("lima instance %q does not exist; create/provision it separately", name)
 }
 func ignoreForwards() []map[string]any {
-	return []map[string]any{{"guestIP": "0.0.0.0", "proto": "any", "ignore": true}}
+	// guestIPMustBeZero must be explicit: Lima defaults it to true for 0.0.0.0,
+	// which would leave loopback-bound guest ports auto-forwarded.
+	return []map[string]any{{"guestIP": "0.0.0.0", "guestIPMustBeZero": false, "proto": "any", "ignore": true}}
 }
 func mountsEqual(a, b []Mount) bool {
 	if len(a) != len(b) {
@@ -118,6 +120,12 @@ func provisionGuest(ctx context.Context, r Runner, i Instance, payload string) e
 }
 func clearGuest(ctx context.Context, r Runner, i Instance) error {
 	_, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest clear", "")
+	return err
+}
+
+// pruneMounts removes empty, unmounted leftover directories under /work.
+func pruneMounts(ctx context.Context, r Runner, i Instance) error {
+	_, err := sshScript(ctx, r, i, "/usr/local/bin/lima-debian-ctl-guest prune-mounts", "")
 	return err
 }
 func guestProject(ctx context.Context, r Runner, i Instance) (string, error) {
