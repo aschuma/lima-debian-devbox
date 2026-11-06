@@ -1,8 +1,0 @@
----
-galaxy_info:
-  author: aschuma
-  license: MIT
-  description: Installs base CLI tools and configures git defaults
-  min_ansible_version: "2.14"
-
-dependencies: []

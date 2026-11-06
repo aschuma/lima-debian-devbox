@@ -1,0 +1,16 @@
+[Unit]
+Description=Clear project credentials at guest startup and orderly shutdown
+After=local-fs.target
+Before=ssh.service sshd.service
+
+[Service]
+Type=oneshot
+User={{ devbox_user }}
+Group={{ devbox_group }}
+ExecStart=/usr/local/bin/lima-debian-ctl-guest clear
+ExecStop=/usr/local/bin/lima-debian-ctl-guest clear
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

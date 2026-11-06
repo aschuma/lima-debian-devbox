@@ -1,2 +1,0 @@
----
-docker_arch: "{{ target_arch }}"

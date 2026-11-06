@@ -13,7 +13,7 @@
 # Tool names are mise registry short names (`mise registry`) or explicit
 # backends (github:owner/repo, npm:package, aqua:owner/repo, ...).
 #
-# After changing a version: rebuild the image or reprovision with
+# After changing a version: reprovision the existing guest with
 #   --tags mise,runtimes      (or --tags mise,cli-tools)
 # Inside the VM the same can be done ad hoc with `mise use -g <tool>@<ver>`.
 # =============================================================================
@@ -35,7 +35,6 @@ mise_cli_tools:
   gh: "latest"
   aws-cli: "latest"
   terraform: "latest"
-  packer: "latest"
   uv: "latest"
   ruff: "latest"
   acli: "latest"

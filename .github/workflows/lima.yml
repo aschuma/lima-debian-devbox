@@ -1,0 +1,84 @@
+---
+name: Lima development tools
+
+on:
+  push:
+    paths:
+      - 'lima-debian-ctl/**'
+      - 'lima-debian-provision/**'
+      - 'justfile'
+      - '.yamllint.yml'
+      - '.github/workflows/lima.yml'
+  pull_request:
+    paths:
+      - 'lima-debian-ctl/**'
+      - 'lima-debian-provision/**'
+      - 'justfile'
+      - '.yamllint.yml'
+      - '.github/workflows/lima.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controller:
+    strategy:
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: lima-debian-ctl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: lima-debian-ctl/go.mod
+          cache-dependency-path: lima-debian-ctl/go.sum
+      - name: Install zsh for shell-quoting tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Test without a VM
+        run: go test -race -cover ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: Build
+        run: go build -o bin/lima-debian-ctl .
+
+  provisioning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Test inventory generation without Lima
+        run: python3 -m unittest discover -s lima-debian-provision/tests -v
+      - name: Check shell scripts
+        run: |
+          shellcheck lima-debian-provision/provision.sh \
+            lima-debian-provision/roles/project_session/files/lima-debian-ctl-guest \
+            lima-debian-provision/roles/project_session/files/lima-debian-ctl.sh
+      - name: Lint workflow YAML
+        run: uvx --from yamllint yamllint .github .yamllint.yml
+      - name: Lint provisioning YAML and Ansible
+        working-directory: lima-debian-provision
+        run: |
+          uvx --from yamllint yamllint .
+          uvx --from ansible-lint ansible-lint playbook.yml
+      - name: Check Ansible syntax without a VM
+        working-directory: lima-debian-provision
+        env:
+          ANSIBLE_CONFIG: ansible.cfg
+          ANSIBLE_COLLECTIONS_PATH: .ansible/collections
+        run: |
+          uvx --from ansible-core ansible-galaxy collection install -r requirements.yml -p .ansible/collections
+          uvx --from ansible-core ansible-playbook --syntax-check -i localhost, playbook.yml

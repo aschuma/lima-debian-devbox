@@ -1,84 +1,48 @@
-# Host-side task runner for the Tart Debian devbox — builds and maintains the TEMPLATE image.
-# Requires: brew install just   (plus packer, ansible, tart for the respective recipes)
-#
-# The image this builds is a read-only baseline. Clone it per project (`just clone <name>`)
-# and manage the clones with tctl (`just install`, then `tctl --help`).
-# Settings for the template live in build/build.env — independent of ~/.config/tctl/config.toml.
-#
-#   just build            build the template image with Packer
-#   just clone my-proj    clone the template into a per-project VM
-#   just reprovision mise re-run a single Ansible tag against the running template VM
-
+# Host tasks for the Go Lima controller and existing-guest Ansible provisioning.
+# Tests, validation, and lint never start/stop or provision a real VM.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-build_env    := justfile_directory() / "build/build.env"
-vm_name      := shell('source "$1" && printf "%s" "${BUILD_VM_NAME:?BUILD_VM_NAME not set in build/build.env}"', build_env)
-ssh_user     := shell('source "$1" && printf "%s" "${BUILD_SSH_USER:?BUILD_SSH_USER not set in build/build.env}"', build_env)
-identity     := shell('source "$1" && printf "%s" "${BUILD_IDENTITY_FILE:?BUILD_IDENTITY_FILE not set in build/build.env}"', build_env)
-cargo_root   := env_var_or_default("CARGO_INSTALL_ROOT", env_var_or_default("CARGO_HOME", env_var("HOME") + "/.cargo"))
-config_dir   := env_var_or_default("XDG_CONFIG_HOME", env_var("HOME") + "/.config") / "tctl"
-ssh_opts     := "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+root := justfile_directory()
 
-# List recipes
 default:
     @just --list
 
-# Build the template image (packer init → validate → build); name from build/build.env
+# Build the host controller (requires Go 1.23+)
 build:
-    ./build/provision.sh
+    mkdir -p "{{root}}/lima-debian-ctl/bin"
+    cd "{{root}}/lima-debian-ctl" && go build -o bin/lima-debian-ctl .
 
-# Validate the Packer template and Ansible playbook syntax
-validate:
-    cd build && packer init debian-ssh.pkr.hcl
-    cd build && packer validate -var-file=vars.pkrvars.hcl -var vm_name={{vm_name}} debian-ssh.pkr.hcl
-    cd build/ansible && ansible-playbook --syntax-check -i localhost, playbook.yml
-
-# Lint Ansible and YAML (brew install ansible-lint yamllint)
-lint:
-    yamllint build/ansible .github
-    cd build/ansible && ansible-lint
-
-# Rust format/lint, unit and sandboxed CLI tests (no real VM required)
-test:
-    cargo fmt --manifest-path tctl/Cargo.toml --check
-    cargo clippy --manifest-path tctl/Cargo.toml --all-targets --locked -- -D warnings
-    cargo test --manifest-path tctl/Cargo.toml --locked
-
-# Install the Rust CLI and TOML defaults (never overwrite config)
+# Install the controller into GOBIN or GOPATH/bin
 install:
-    cargo install --path "{{justfile_directory()}}/tctl" --locked --root "{{cargo_root}}"
-    mkdir -p "{{config_dir}}"
-    @if [[ -e "{{config_dir}}/config.toml" ]]; then \
-      echo "Kept existing {{config_dir}}/config.toml"; \
-    else \
-      install -m 0644 "{{justfile_directory()}}/config_template/config.toml" "{{config_dir}}/config.toml"; \
-    fi
-    @echo "Installed tctl → {{cargo_root}}/bin/tctl (add this directory to PATH)"
+    cd "{{root}}/lima-debian-ctl" && go install .
 
-# Explicit real-VM smoke test; updates SSH config, but never provisions env files
-smoke project:
-    cargo build --manifest-path tctl/Cargo.toml --locked
-    bash scripts/smoke-tctl.sh "{{justfile_directory()}}/tctl/target/debug/tctl" "{{project}}"
+# Go formatting, race tests, vet, staticcheck, and Python inventory tests; no VM required
+test:
+    cd "{{root}}/lima-debian-ctl" && test -z "$(gofmt -l .)"
+    cd "{{root}}/lima-debian-ctl" && go test -race -cover ./...
+    cd "{{root}}/lima-debian-ctl" && go vet ./...
+    cd "{{root}}/lima-debian-ctl" && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+    python3 -m unittest discover -s "{{root}}/lima-debian-provision/tests" -v
 
-# Clone the template image into a per-project VM, e.g.: just clone my-project
-clone name:
-    tart clone {{vm_name}} {{name}}
-    @echo "Cloned '{{vm_name}}' → '{{name}}'. Point a project at it:"
-    @echo "  cd ~/Projects/{{name}} && tctl init && tctl up"
+# Install Ansible collections into the provisioning directory
+deps:
+    "{{root}}/lima-debian-provision/provision.sh" --install-deps
 
-# Re-run the Ansible playbook against the template VM (auto-starts/stops it). Optional tags, e.g.: just reprovision mise,runtimes
-reprovision tags="all":
-    ./build/with-vm.sh -C build/ansible ansible-playbook playbook.yml \
-      -i "__VM_IP__," \
-      --private-key "{{identity}}" \
-      -u {{ssh_user}} --become \
-      --tags {{tags}} \
-      --extra-vars "ansible_user={{ssh_user}} ansible_ssh_common_args='{{ssh_opts}}'"
+# Ansible syntax only, using localhost inventory; no Lima instance required
+validate:
+    cd "{{root}}/lima-debian-provision" && ANSIBLE_CONFIG="$PWD/ansible.cfg" ANSIBLE_COLLECTIONS_PATH="$PWD/.ansible/collections" ansible-playbook --syntax-check -i localhost, playbook.yml
 
-# Show mise-managed tools inside the template VM (auto-starts/stops it)
-tools:
-    ./build/with-vm.sh ssh -i "{{identity}}" {{ssh_opts}} {{ssh_user}}@__VM_IP__ 'bash -lc "mise ls"'
+# Shell, YAML, and Ansible lint (requires shellcheck and uv)
+lint:
+    shellcheck "{{root}}/lima-debian-provision/provision.sh" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl-guest" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl.sh"
+    cd "{{root}}" && uvx --from yamllint yamllint .github .yamllint.yml
+    cd "{{root}}/lima-debian-provision" && uvx --from yamllint yamllint .
+    cd "{{root}}/lima-debian-provision" && uvx --from ansible-lint ansible-lint playbook.yml
 
-# Delete the template image (clones are not affected)
-clean:
-    tart delete {{vm_name}}
+# APPLY base provisioning to an existing running VM (optional comma-separated tags)
+provision tags="all":
+    "{{root}}/lima-debian-provision/provision.sh" --tags {{quote(tags)}}
+
+# APPLY the explicit Java Testcontainers runtime check inside the guest
+smoke:
+    "{{root}}/lima-debian-provision/provision.sh" --tags testcontainers-smoke

@@ -1,8 +1,9 @@
 # Provision an existing Debian 12 Lima VM
 
-Standalone Ansible provisioning adapted from this repository's Tart roles. This
-folder contains all provisioning configuration, roles, helpers, and tests; the
-original `build/`, `justfile`, and Rust `tctl` are unchanged.
+Ansible provisioning for an existing Lima development VM. This folder contains
+the base toolchain, Docker setup, shell configuration, project-session helpers,
+and provisioning tests. Project activation is handled separately by the Go
+controller in [`../lima-debian-ctl/`](../lima-debian-ctl/README.md).
 
 ## Assumptions and safety
 
@@ -81,11 +82,10 @@ If selecting another account, that account must already have SSH access using
 Lima's generated connection settings and passwordless sudo. The wrapper does
 not provision credentials or change Lima's configured user.
 
-Tool versions live in `group_vars/all/tool_versions.yml`, copied from the Tart
-setup, including Java, Node, Python, GraalPy, build tools, cloud/AI CLIs, and
-`just`. Pi is installed through mise's `pi` registry entry with version `latest`
-and verified with `pi --version`. The files are independent: future changes to Tart's registry are **not**
-automatically synchronized here. The GraalPy asset currently targets ARM64.
+Tool versions live in `group_vars/all/tool_versions.yml`, including Java, Node,
+Python, GraalPy, build tools, cloud/AI CLIs, and `just`. Pi is installed through
+mise's `pi` registry entry with version `latest` and verified with `pi --version`.
+The GraalPy asset currently targets ARM64.
 
 mise trusts only the discovered guest home by default. To trust projects
 elsewhere, pass an explicit guest-local path list:
@@ -199,8 +199,25 @@ to a real VM, run provisioning a second time and review the recap for unexpected
 changes. Installs, group changes, and shell edits have not been validated until
 that apply and second run succeed.
 
+## Project-scoped Lima controller
+
+The separate Go controller in [`../lima-debian-ctl/`](../lima-debian-ctl/README.md)
+manages one active project's mounts, environment, and SSH tunnels on this VM.
+It never runs project mise setup. Prepare its guest helpers explicitly with:
+
+```bash
+./lima-debian-provision/provision.sh --tags project-session
+```
+
+The `project-session` role also runs during full provisioning. It installs
+Bash/zsh environment loaders, an SSH execution helper, and a systemd service
+that removes the controller's environment file at startup and orderly shutdown.
+Starting the service for the first time clears that file if it already exists.
+It does not resolve or provision project credentials itself.
+
 ## Out of scope
 
-This does not migrate `tctl`, clone/delete operations, project env injection,
-Tart SSH-config maintenance, or Lima mount settings. Projects and Docker bind
-mounts should use guest-local paths. Nothing mounts your macOS home directory.
+This provisioning directory does not create, clone, delete, start, or stop VMs,
+or change Lima mount settings. Project environment injection, mounts, and
+forwarding belong to the separate controller. Nothing here mounts your macOS
+home directory.

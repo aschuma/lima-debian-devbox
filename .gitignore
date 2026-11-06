@@ -1,14 +1,9 @@
+# Local configuration and host build outputs
 local/
-local/**
-bin
+bin/
+.idea/
 
-# ansible-lint / ansible-galaxy install collections here
+# Ansible collections/caches and Python test caches
 .ansible/
-
-# Rust build products and Python test caches (Cargo.lock is committed)
-tctl/target/
 __pycache__/
-
-# Keep project scripts even when a developer's global ignore excludes Scripts
-!/scripts/
-!/scripts/*.sh
+*.py[cod]

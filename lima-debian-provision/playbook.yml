@@ -96,6 +96,8 @@
     - role: shell
       when: configure_shell | bool
       tags: [shell]
+    - role: project_session
+      tags: [project-session]
     - role: verify
       tags: [verify]
 

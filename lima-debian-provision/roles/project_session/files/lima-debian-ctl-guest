@@ -1,0 +1,68 @@
+#!/bin/bash
+# Persistent project environment, fed over SSH by lima-debian-ctl.
+# Never trace commands or print environment contents.
+set -euo pipefail
+
+LIMA_DEBIAN_CTL_HOME=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)
+[[ -n "$LIMA_DEBIAN_CTL_HOME" && "$LIMA_DEBIAN_CTL_HOME" != / ]] || exit 1
+LIMA_DEBIAN_CTL_DIR="$LIMA_DEBIAN_CTL_HOME/.config/lima-debian-ctl"
+LIMA_DEBIAN_CTL_FILE="$LIMA_DEBIAN_CTL_DIR/environment.sh"
+
+check() {
+    /usr/bin/systemctl is-active --quiet lima-debian-ctl-session.service
+    /usr/bin/cat /proc/sys/kernel/random/boot_id
+}
+
+case "${1:-}" in
+    check)
+        check
+        ;;
+    provision)
+        check >/dev/null
+        umask 077
+        /usr/bin/install -d -m 0700 "$LIMA_DEBIAN_CTL_DIR"
+        # install -d leaves an existing directory's mode alone; enforce it.
+        /usr/bin/chmod 0700 "$LIMA_DEBIAN_CTL_DIR"
+        LIMA_DEBIAN_CTL_TMP=$(/usr/bin/mktemp "$LIMA_DEBIAN_CTL_DIR/.environment.XXXXXX")
+        trap '/usr/bin/rm -f "$LIMA_DEBIAN_CTL_TMP"' EXIT
+        /usr/bin/cat > "$LIMA_DEBIAN_CTL_TMP"
+        # Syntax-check without executing the payload. Only the trusted host
+        # controller should call this command; it generates quoted exports.
+        /bin/bash -n "$LIMA_DEBIAN_CTL_TMP"
+        /usr/bin/chmod 0600 "$LIMA_DEBIAN_CTL_TMP"
+        /usr/bin/mv -f "$LIMA_DEBIAN_CTL_TMP" "$LIMA_DEBIAN_CTL_FILE"
+        ;;
+    clear)
+        /usr/bin/rm -f "$LIMA_DEBIAN_CTL_FILE" "$LIMA_DEBIAN_CTL_DIR"/.environment.*
+        ;;
+    status)
+        check >/dev/null
+        [[ -r "$LIMA_DEBIAN_CTL_FILE" ]] || exit 1
+        # shellcheck disable=SC1090
+        . "$LIMA_DEBIAN_CTL_FILE"
+        printf '%s\n' "${LIMA_DEBIAN_CTL_PROJECT:-}"
+        ;;
+    exec)
+        check >/dev/null
+        [[ $# -ge 4 && -r "$LIMA_DEBIAN_CTL_FILE" ]] || exit 1
+        LIMA_DEBIAN_CTL_EXPECTED=$2
+        LIMA_DEBIAN_CTL_WORKDIR=$3
+        shift 3
+        [[ "$LIMA_DEBIAN_CTL_WORKDIR" == /work/* ]] || exit 1
+        # shellcheck disable=SC1090
+        . "$LIMA_DEBIAN_CTL_FILE"
+        [[ "${LIMA_DEBIAN_CTL_PROJECT:-}" == "$LIMA_DEBIAN_CTL_EXPECTED" ]] || exit 1
+        cd -- "$LIMA_DEBIAN_CTL_WORKDIR"
+        if [[ "$1" == --shell && $# -eq 1 ]]; then
+            LIMA_DEBIAN_CTL_SHELL=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f7)
+            exec "$LIMA_DEBIAN_CTL_SHELL" -l
+        fi
+        [[ "$1" == -- && $# -ge 2 ]] || exit 2
+        shift
+        exec -- "$@"
+        ;;
+    *)
+        printf 'Usage: lima-debian-ctl-guest check|provision|clear|status|exec PROJECT DIR COMMAND...\n' >&2
+        exit 2
+        ;;
+esac
