@@ -42,6 +42,13 @@ just install            # go install → $(go env GOPATH)/bin/lima-debian-ctl
 lima-debian-ctl --help
 ```
 
+If the second command says "not found", Go's bin directory is not on your
+`PATH`. Add it to `~/.zshrc` and open a new shell:
+
+```zsh
+export PATH="$HOME/go/bin:$PATH"
+```
+
 ## 4. Describe a project
 
 ```bash

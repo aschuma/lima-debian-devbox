@@ -9,7 +9,7 @@ Go 1.23+, macOS or Linux host. Talks to `limactl` and `ssh` as subprocesses;
 no daemon. Runtime dependencies: `go-toml/v2`, `x/sys`.
 
 ```bash
-go install .                                                  # host
+go install .                 # → $(go env GOPATH)/bin; make sure that is on PATH
 ./lima-debian-provision/provision.sh --tags project-session   # guest, once
 ```
 

@@ -15,6 +15,9 @@ build:
 # Install the controller into GOBIN or GOPATH/bin
 install:
     cd "{{root}}/lima-debian-ctl" && go install .
+    @bin="$(go env GOBIN)"; bin="${bin:-$(go env GOPATH)/bin}"; \
+      case ":$PATH:" in *":$bin:"*) echo "Installed $bin/lima-debian-ctl";; \
+      *) echo "Installed $bin/lima-debian-ctl — $bin is not on PATH; add: export PATH=\"$bin:\$PATH\"";; esac
 
 # Go formatting, race tests, vet, staticcheck, and Python inventory tests; no VM required
 test:
