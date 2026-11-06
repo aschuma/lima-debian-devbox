@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Global mise configuration — generated from Ansible variables.
+# Project-level mise.toml files override these versions.
+
+[settings]
+trusted_config_paths = [{% for p in mise_trusted_config_paths %}"{{ p }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+
+[tools]
+{% for name, spec in mise_tools.items() %}
+{% if spec is mapping %}
+"{{ name }}" = { {% for k, v in spec.items() %}{{ k }} = "{{ v }}"{% if not loop.last %}, {% endif %}{% endfor %} }
+{% else %}
+"{{ name }}" = "{{ spec }}"
+{% endif %}
+{% endfor %}

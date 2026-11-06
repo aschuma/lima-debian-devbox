@@ -1,0 +1,6 @@
+---
+profile: moderate
+skip_list:
+  - name[template]       # task names with {{ }} are used deliberately
+  - risky-shell-pipe
+  - command-instead-of-shell

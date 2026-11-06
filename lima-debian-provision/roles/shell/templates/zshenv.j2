@@ -1,0 +1,8 @@
+# ~/.zshenv — managed by Ansible (roles/shell); read by EVERY zsh, interactive or not.
+#
+# Put the mise shims on PATH so that non-interactive commands such as
+#   ssh {{ devbox_user }} 'java --version'
+# and scripts / IDE tooling find the mise-managed tools. Interactive shells
+# replace the shims with the real tool paths in ~/.zshrc (mise activate).
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
+command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh --shims)"

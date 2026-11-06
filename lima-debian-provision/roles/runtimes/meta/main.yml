@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  author: aschuma
+  license: MIT
+  description: Installs language runtimes and build tools (Java, Node.js, Gradle, Maven, Kotlin, GraalPy) via mise
+  min_ansible_version: "2.14"
+
+dependencies:
+  - role: mise

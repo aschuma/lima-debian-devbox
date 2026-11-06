@@ -1,0 +1,14 @@
+---
+- name: Install runtimes via mise
+  ansible.builtin.include_role:
+    name: mise
+    tasks_from: install
+  vars:
+    mise_install_tools: "{{ mise_runtimes }}"
+
+- name: Verify runtimes
+  ansible.builtin.include_role:
+    name: mise
+    tasks_from: verify
+  vars:
+    mise_verify_commands: "{{ runtimes_verify_commands }}"

@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: aschuma
+  license: MIT
+  description: zsh as login shell for the devbox user, starship prompt, bash and zsh completions
+  min_ansible_version: "2.14"
+
+dependencies: []

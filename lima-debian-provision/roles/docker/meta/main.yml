@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: aschuma
+  license: MIT
+  description: Installs Docker CE and Compose plugin from the official Debian repository
+  min_ansible_version: "2.14"
+
+dependencies: []

@@ -1,0 +1,19 @@
+---
+# Reusable task file: runs each command in `mise_verify_commands` (list of
+# strings) in a login shell of the devbox user and prints the first line.
+# The play fails if any command exits non-zero.
+
+- name: Verify tools
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc {{ item | quote }}
+  loop: "{{ mise_verify_commands }}"
+  register: mise_verify_results
+  changed_when: false
+
+- name: Show tool versions
+  ansible.builtin.debug:
+    msg: "{{ item.item }} → {{ ((item.stdout_lines + item.stderr_lines) | select | first) | default('(no output)') }}"
+  loop: "{{ mise_verify_results.results }}"
+  loop_control:
+    label: "{{ item.item }}"

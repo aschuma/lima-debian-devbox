@@ -1,0 +1,38 @@
+---
+# Reusable task file: installs the subset of globally configured tools given in
+# `mise_install_tools` (dict, same shape as mise_tools) for the devbox user.
+# Usage:
+#   - ansible.builtin.include_role:
+#       name: mise
+#       tasks_from: install
+#     vars:
+#       mise_install_tools: "{{ mise_runtimes }}"
+
+- name: List missing mise tools
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc 'mise ls --missing --json'
+  register: mise_missing_raw
+  changed_when: false
+
+- name: Determine which requested tools are missing
+  ansible.builtin.set_fact:
+    mise_missing_tools: >-
+      {{ (mise_missing_raw.stdout | from_json).keys() | list
+         | intersect(mise_install_tools.keys() | list) }}
+
+- name: Install missing tools via mise ({{ mise_missing_tools | join(', ') }})
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: >-
+    bash -lc 'mise install --yes {{ mise_missing_tools | map('quote') | join(' ') }}'
+  # Forward a GitHub token from the controller (if set) to avoid API rate limits
+  environment: "{{ {'MISE_GITHUB_TOKEN': lookup('env', 'MISE_GITHUB_TOKEN')} if lookup('env', 'MISE_GITHUB_TOKEN') else {} }}"
+  async: 3600
+  poll: 15
+  register: mise_install_result
+  retries: 2
+  delay: 10
+  until: mise_install_result.rc == 0
+  when: mise_missing_tools | length > 0
+  changed_when: true

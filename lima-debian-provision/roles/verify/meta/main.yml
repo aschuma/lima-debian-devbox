@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: aschuma
+  license: MIT
+  description: Final verification gate — fails the build if any tool or account check fails
+  min_ansible_version: "2.14"
+
+dependencies: []

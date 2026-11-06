@@ -1,0 +1,35 @@
+# ~/.zshrc — managed by Ansible (roles/shell); interactive shells only.
+# Local additions: put them in ~/.zshrc.local (sourced at the end).
+
+# --- history -----------------------------------------------------------------
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=50000
+SAVEHIST=50000
+setopt HIST_IGNORE_ALL_DUPS HIST_REDUCE_BLANKS HIST_IGNORE_SPACE
+setopt SHARE_HISTORY INC_APPEND_HISTORY
+
+# --- behaviour ---------------------------------------------------------------
+setopt AUTO_CD INTERACTIVE_COMMENTS NO_BEEP
+bindkey -e
+
+# --- completions -------------------------------------------------------------
+# System completions plus the generated ones in {{ shell_zsh_completion_dir }}
+# (mise, gh, docker, uv, ruff, starship) — both are in the default $fpath.
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+
+# --- mise: full activation (supersedes the shims from ~/.zshenv) -------------
+command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"
+
+# --- starship prompt (config: ~/.config/starship.toml) -----------------------
+command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
+
+# --- aliases -----------------------------------------------------------------
+alias ls='ls --color=auto'
+alias ll='ls -alF'
+alias la='ls -A'
+alias grep='grep --color=auto'
+
+[[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"

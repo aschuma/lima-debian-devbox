@@ -1,0 +1,97 @@
+---
+# Docker uses /usr/bin/containerd via its packaged system service. Lima's
+# rootless runtime lives in /usr/local/bin and user services; leave it alone.
+- name: Inspect installed packages before adding Docker CE
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: Reject conflicting distro packages without removing existing runtimes
+  ansible.builtin.assert:
+    that:
+      - "'docker.io' not in ansible_facts['packages']"
+      - "'containerd' not in ansible_facts['packages']"
+      - "'runc' not in ansible_facts['packages']"
+    fail_msg: >-
+      Existing distro Docker/containerd/runc packages require an explicit migration.
+      No runtime packages will be removed automatically.
+
+- name: Install gnupg for GPG key dearmoring
+  ansible.builtin.apt:
+    name: gnupg
+    state: present
+
+- name: Create apt keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Check if Docker GPG keyring already exists
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/docker-archive-keyring.gpg
+  register: docker_keyring_stat
+
+- name: Download Docker GPG key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /tmp/docker.asc
+    mode: '0644'
+    timeout: 600
+  when: not docker_keyring_stat.stat.exists
+
+- name: Dearmor Docker GPG key
+  ansible.builtin.command: gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker-archive-keyring.gpg /tmp/docker.asc
+  when: not docker_keyring_stat.stat.exists
+  changed_when: not docker_keyring_stat.stat.exists
+
+- name: Add Docker apt repository (bookworm)
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.list
+    content: "deb [arch={{ docker_arch }} signed-by=/etc/apt/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bookworm stable\n"
+    mode: '0644'
+
+- name: Refresh apt cache after adding Docker repo
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Install Docker Engine and Compose plugin
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+
+- name: Enable and start Docker daemon
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Add existing developer to docker group
+  ansible.builtin.user:
+    name: "{{ devbox_user }}"
+    groups: docker
+    append: true
+
+- name: Reconnect so Docker group membership takes effect
+  ansible.builtin.meta: reset_connection
+
+- name: Verify Docker as the existing developer without sudo
+  become: false
+  ansible.builtin.command: docker info
+  when: not ansible_check_mode
+  register: docker_ver
+  changed_when: false
+
+- name: Show Docker version
+  ansible.builtin.debug:
+    msg: "{{ docker_ver.stdout }}"
+
+- name: Clean up Docker GPG key download
+  ansible.builtin.file:
+    path: /tmp/docker.asc
+    state: absent
+  when: not docker_keyring_stat.stat.exists

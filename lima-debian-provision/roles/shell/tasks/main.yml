@@ -1,0 +1,121 @@
+---
+- name: Install zsh
+  ansible.builtin.apt:
+    name: zsh
+    state: present
+
+- name: Configure existing developer login shell
+  ansible.builtin.user:
+    name: "{{ devbox_user }}"
+    shell: "{{ shell_login_shell }}"
+
+# Debian's zsh does not read /etc/profile — source it so /etc/profile.d/*.sh
+# (including mise shims) apply to zsh login shells too.
+- name: Source /etc/profile from zsh login shells
+  ansible.builtin.lineinfile:
+    path: /etc/zsh/zprofile
+    line: "[[ -r /etc/profile ]] && emulate sh -c 'source /etc/profile'"
+    regexp: "source /etc/profile"
+    create: true
+    mode: '0644'
+
+- name: Write zsh dotfiles for {{ devbox_user }}
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ devbox_home }}/{{ item.dest }}"
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0644'
+  loop:
+    - { src: zshenv.j2, dest: .zshenv }
+    - { src: zshrc.j2, dest: .zshrc }
+
+- name: Enable starship prompt in bash for {{ devbox_user }}
+  ansible.builtin.lineinfile:
+    path: "{{ devbox_home }}/.bashrc"
+    line: 'command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"'
+    regexp: 'starship init bash'
+    create: true
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0644'
+
+- name: Create ~/.config for {{ devbox_user }}
+  ansible.builtin.file:
+    path: "{{ devbox_home }}/.config"
+    state: directory
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0755'
+
+- name: Install starship config
+  ansible.builtin.copy:
+    src: starship.toml
+    dest: "{{ devbox_home }}/.config/starship.toml"
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0644'
+
+# --- completions -------------------------------------------------------------
+- name: Create completion directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ shell_bash_completion_dir }}"
+    - "{{ shell_zsh_completion_dir }}"
+
+- name: Generate bash completions as {{ devbox_user }}
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc '{{ item.bash }}'
+  loop: "{{ shell_completions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: shell_bash_completion_out
+  changed_when: false
+
+- name: Generate zsh completions as {{ devbox_user }}
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc '{{ item.zsh }}'
+  loop: "{{ shell_completions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: shell_zsh_completion_out
+  changed_when: false
+
+- name: Install bash completions
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}\n"
+    dest: "{{ shell_bash_completion_dir }}/{{ item.item.name }}"
+    mode: '0644'
+  loop: "{{ shell_bash_completion_out.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Install zsh completions
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}\n"
+    dest: "{{ shell_zsh_completion_dir }}/_{{ item.item.name }}"
+    mode: '0644'
+  loop: "{{ shell_zsh_completion_out.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+# Non-interactive zsh: proves the files are found via the default $fpath alone
+- name: Check zsh completions are picked up by compinit
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: >-
+    zsh -c 'autoload -Uz compinit && compinit;
+    for f in {{ shell_completions | map(attribute='name') | join(' ') }}; do
+      (( $+_comps[$f] )) || { echo "no zsh completion for $f"; exit 1; };
+    done; echo "zsh completions: {{ shell_completions | map(attribute='name') | join(' ') }}"'
+  register: shell_zsh_check
+  changed_when: false
+
+- name: Show zsh completion check
+  ansible.builtin.debug:
+    msg: "{{ shell_zsh_check.stdout_lines }}"

@@ -1,0 +1,141 @@
+---
+- name: Provision an existing Debian 12 Lima VM
+  hosts: all
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Check system Python without modifying the guest
+      become: false
+      ansible.builtin.raw: test -x /usr/bin/python3
+      changed_when: false
+      check_mode: false
+      tags: [always, preflight]
+
+    - name: Gather guest facts with system Python
+      ansible.builtin.setup:
+      tags: [always, preflight]
+
+    - name: Validate Debian 12 ARM64
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Debian'
+          - ansible_facts['distribution_major_version'] == '12'
+          - ansible_facts['architecture'] == 'aarch64'
+        fail_msg: This toolchain currently supports Debian 12 on ARM64 only.
+      tags: [always, preflight]
+
+    - name: Read the existing developer account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ lima_user }}"
+      tags: [always, preflight]
+
+    - name: Read the existing developer primary group
+      ansible.builtin.getent:
+        database: group
+        key: "{{ ansible_facts['getent_passwd'][lima_user][2] }}"
+      tags: [always, preflight]
+
+    - name: Resolve guest paths and architecture for adapted roles
+      ansible.builtin.set_fact:
+        devbox_user: "{{ lima_user }}"
+        devbox_home: "{{ ansible_facts['getent_passwd'][lima_user][4] }}"
+        devbox_group: "{{ ansible_facts['getent_group'].keys() | first }}"
+        target_arch: arm64
+      tags: [always, preflight]
+
+    - name: Inspect the existing guest home
+      ansible.builtin.stat:
+        path: "{{ devbox_home }}"
+      register: guest_home
+      tags: [always, preflight]
+
+    - name: Require an existing guest home directory
+      ansible.builtin.assert:
+        that:
+          - devbox_home is match('^/')
+          - devbox_home != '/'
+          - guest_home.stat.isdir | default(false)
+      tags: [always, preflight]
+
+    - name: Check passwordless sudo as the existing user
+      become: false
+      ansible.builtin.command: sudo -n true
+      changed_when: false
+      check_mode: false
+      tags: [always, preflight]
+
+    - name: Report provisioning target
+      ansible.builtin.debug:
+        msg: >-
+          user={{ devbox_user }} home={{ devbox_home }} group={{ devbox_group }};
+          Docker={{ install_docker }} shell={{ configure_shell }};
+          no account creation, SSH changes, mounts, or VM lifecycle operations.
+      tags: [always, preflight]
+
+    - name: Upgrade Debian packages only when explicitly enabled
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      when: upgrade_packages | bool
+      tags: [upgrade]
+
+  roles:
+    - role: common_tools
+      tags: [common-tools]
+    - role: docker
+      when: install_docker | bool
+      tags: [docker]
+    - role: mise
+      tags: [mise]
+    - role: runtimes
+      tags: [runtimes]
+    - role: cli_tools
+      tags: [cli-tools]
+    - role: shell
+      when: configure_shell | bool
+      tags: [shell]
+    - role: verify
+      tags: [verify]
+
+  post_tasks:
+    - name: Run explicit Java Testcontainers smoke test
+      tags: [never, testcontainers-smoke]
+      become: false
+      block:
+        - name: Require Docker for Testcontainers
+          ansible.builtin.assert:
+            that:
+              - install_docker | bool
+              - not ansible_check_mode
+
+        - name: Create guest-local smoke project directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: testcontainers-smoke-
+          register: smoke_dir
+
+        - name: Transfer smoke project over SSH
+          ansible.builtin.copy:
+            src: "tests/testcontainers/{{ item }}"
+            dest: "{{ smoke_dir.path }}/"
+            mode: preserve
+          loop: [pom.xml, src]
+
+        - name: Build and run Java smoke test as the developer
+          ansible.builtin.command: bash -lc 'mvn --batch-mode --no-transfer-progress compile exec:exec'
+          args:
+            chdir: "{{ smoke_dir.path }}"
+          changed_when: true
+          register: smoke_result
+
+        - name: Show smoke test output
+          ansible.builtin.debug:
+            var: smoke_result.stdout_lines
+      always:
+        - name: Remove guest-local smoke project
+          ansible.builtin.file:
+            path: "{{ smoke_dir.path }}"
+            state: absent
+          when: smoke_dir is defined and smoke_dir.path is defined
