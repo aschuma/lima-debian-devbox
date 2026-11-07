@@ -27,7 +27,9 @@ var reservedEnvNames = map[string]bool{
 }
 
 // parseEnvironment reads literal KEY=value records separated by CR, LF or
-// CRLF. Errors report line numbers only, never record contents.
+// CRLF. Blank lines, "#" comments and an "export " prefix are accepted so
+// ordinary .env files work; values are taken verbatim, quotes included.
+// Errors report line numbers only, never record contents.
 func parseEnvironment(text string) (map[string]string, error) {
 	if len(text) > environmentLimit || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return nil, errors.New("resolver output must be UTF-8, NUL-free, and at most 1 MiB")
@@ -35,10 +37,10 @@ func parseEnvironment(text string) (map[string]string, error) {
 	normalized := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
 	env := make(map[string]string)
 	for i, line := range strings.Split(normalized, "\n") {
-		if line == "" {
+		if trimmed := strings.TrimSpace(line); trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		key, val, ok := strings.Cut(line, "=")
+		key, val, ok := strings.Cut(strings.TrimPrefix(line, "export "), "=")
 		switch {
 		case !ok || !envName.MatchString(key):
 			return nil, fmt.Errorf("invalid environment record on line %d", i+1)

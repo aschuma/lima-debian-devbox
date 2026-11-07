@@ -80,7 +80,8 @@ timeout_seconds = 60
 
 The resolver is any program. It runs on the host, in the project directory,
 without a terminal, and must print one `KEY=value` per line (CR, LF or CRLF).
-Nothing is evaluated: the value is everything after the first `=`, verbatim.
+Comments, blank lines and `export ` prefixes are fine. Nothing is evaluated:
+the value is everything after the first `=`, verbatim.
 A typical resolver reads a 1Password item or an encrypted file. Unlock it
 beforehand; the script cannot prompt.
 

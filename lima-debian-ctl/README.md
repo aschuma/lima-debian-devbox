@@ -72,9 +72,10 @@ ARTIFACTORY_TOKEN=abc=def
 EMPTY=
 ```
 
-One record per line, CR, LF or CRLF. Key is a shell identifier; value is the
-rest of the line, untouched — no quoting rules, no `export`, no comments, no
-interpolation. Duplicates, bad names, NUL bytes, non-UTF-8 and output over
+One record per line, CR, LF or CRLF. Blank lines, `#` comments and a leading
+`export ` are ignored, so a plain `.env` file works. The key is a shell
+identifier; the value is the rest of the line, untouched — quotes are kept,
+nothing is interpolated. Duplicates, bad names, NUL bytes, non-UTF-8 and output over
 1 MiB are errors. `HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only
 bash/zsh variables and anything starting with `LIMA_DEBIAN_CTL_` are reserved.
 On error the existing env file is left alone and no output is echoed.
