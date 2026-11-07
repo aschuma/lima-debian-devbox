@@ -25,12 +25,13 @@ and a systemd unit. `activate` refuses to run against a VM that lacks them.
 | `activate` | Make this project the VM's active project. Prompts if it has to stop the VM or replace mounts; `--yes` skips the prompt. |
 | `provision` | Rerun the resolver, replace the env file and SSH keys. No restart. |
 | `status` | Ready or not, and why. |
-| `shell` | Login shell in the project directory, after a short banner: mounts, forwards, variable names. |
+| `shell` | Login shell in the project directory, after a banner listing mounts, forwards, variable names and keys. |
 | `exec -- CMD...` | Run a command there. Exit code is passed through. |
-| `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
+| `deactivate`, `stop` | Delete the env file and keys, close tunnels, stop the VM. |
 
-Flags come after the command: `activate --yes --json`. `--json` prints the
-result compactly; errors go to stderr. `shell` and `exec` have no `--json`.
+Flags come after the command: `activate --yes --json`. Results are printed as
+JSON; `--json` puts them on one line. Errors go to stderr. `shell` and `exec`
+have no `--json`.
 `.devvm.toml` is found by walking up from the current directory, or given
 with `--config`.
 
@@ -63,7 +64,8 @@ source = "~/.ssh/id_ed25519"       # host path; "./x" is relative to this file
 
 Rejected: unknown keys, mounts that overlap, mounts that would expose the host
 home or one of its parents, guest paths outside `/work/`, duplicate forward
-listeners. There is no global config file; everything is per project.
+listeners, SSH key names that start with a dot, contain a `/`, end in `.pub` or
+repeat. There is no global config file; everything is per project.
 
 ### Resolver
 
@@ -80,9 +82,10 @@ One record per line, CR, LF or CRLF. Blank lines, `#` comments and a leading
 `export ` are ignored, so a plain `.env` file works. The key is a shell
 identifier; the value is the rest of the line, untouched — quotes are kept,
 nothing is interpolated. A name that appears twice takes its last value.
-Bad names, NUL bytes, non-UTF-8 and output over 1 MiB are errors. `HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only
-bash/zsh variables and anything starting with `LIMA_DEBIAN_CTL_` are reserved.
-On error the existing env file is left alone and no output is echoed.
+Bad names, NUL bytes, non-UTF-8 and output over 1 MiB are errors. `HOME`,
+`BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only bash/zsh variables and
+anything starting with `LIMA_DEBIAN_CTL_` are reserved. On error the existing
+env file is left alone and no output is echoed.
 
 The resolver is code you run. Read it before activating someone else's project.
 
@@ -109,12 +112,14 @@ here. Lima's SSH port is unaffected.
 ## What activate does
 
 1. Reads `limactl list --json` and the saved state; decides whether an edit
-   or restart is needed.
-2. Runs the resolver. Fails here, and nothing has changed yet.
+   or restart is needed. If the VM is running, checks the guest helpers are
+   installed.
+2. Runs the resolver and reads the SSH keys on the host. A failure here
+   changes nothing.
 3. Backs up `lima.yaml` to the state directory.
 4. Closes the previous project's tunnels. If restarting: deletes the old env
-   file, `limactl stop`, `limactl edit --set` mounts and forwarding policy,
-   `limactl start`, waits for SSH.
+   file and keys, `limactl stop`, `limactl edit --set` mounts and forwarding
+   policy, `limactl start`, waits for SSH.
 5. Uploads the env file (`0600`, atomic rename) to
    `~/.config/lima-debian-ctl/environment.sh` in the guest, the configured
    SSH keys to `~/.ssh`, and a `motd` with the project, mounts, forwards,
@@ -126,13 +131,13 @@ here. Lima's SSH port is unaffected.
    broken loader shows up now rather than in the IDE.
 8. Writes `phase: ready` with the guest boot ID.
 
-Same project, unchanged config, VM already matching: steps 4 skip the restart.
+Same project, VM already matching: step 4 only closes tunnels, no restart.
 Different project or changed mounts: always a restart, so no process from the
 previous project survives.
 
-On any failure the phase is `incomplete`, tunnels are closed and a freshly
-uploaded env file is removed. The previous project's credentials are not
-restored. Run `plan`, fix the cause, `activate` again.
+On any failure the phase is `incomplete`, tunnels are closed and freshly
+uploaded env file and keys are removed. The previous project's credentials are
+not restored. Run `plan`, fix the cause, `activate` again.
 
 ## Guest side
 
@@ -142,9 +147,10 @@ and `shell` go through the guest helper, which sources the file itself, checks
 the project marker and `cd`s to the first mount — no dependency on shell
 startup files.
 
-`lima-debian-ctl-session.service` deletes the env file on clean shutdown and
-on boot. A hard stop can leave it on disk until the next boot; the file is on
-the guest disk by design and is not shredded. Snapshots keep it.
+`lima-debian-ctl-session.service` deletes the env file, the keys and the
+banner on clean shutdown and on boot. A hard stop can leave them on disk until
+the next boot. They are on the guest disk by design and are not shredded;
+snapshots keep them.
 
 Changing the file does not change running processes. Restart your IDE backend
 or Gradle daemon after `provision`.

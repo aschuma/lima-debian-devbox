@@ -67,8 +67,8 @@ that directory; after installing another JDK run `just -f ~/.jdks/justfile`
 in the guest to refresh them.
 
 `project-session` installs `/usr/local/bin/lima-debian-ctl-guest`, the shell
-loaders for the controller's env file, and a systemd unit that deletes that
-file at shutdown and boot. It is part of a full run and can be applied alone.
+loaders for the controller's env file, and a systemd unit that deletes the
+env file and provisioned SSH keys at shutdown and boot. It is part of a full run and can be applied alone.
 
 ## Docker
 
@@ -96,7 +96,7 @@ normal run.
 ## Checks without a VM
 
 ```bash
-just test       # inventory tests
+just test       # includes the inventory tests
 just lint       # shellcheck, yamllint, ansible-lint
 just validate   # playbook syntax
 ```

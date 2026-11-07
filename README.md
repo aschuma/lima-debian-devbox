@@ -1,8 +1,8 @@
 # Lima Debian dev VM
 
 One Debian 12 (ARM64) Lima VM, reused across projects. Only the active
-project's folders are mounted, and its credentials are provisioned into the
-guest. Nothing from the host home is shared.
+project's folders are mounted, and only its credentials and SSH keys are
+copied into the guest. The host home is never mounted.
 
 | Directory | What it does |
 | --- | --- |
@@ -19,7 +19,8 @@ guest. Nothing from the host home is shared.
   active project needs no restart.
 - Credentials come from a script you configure. It runs on the host and prints
   `KEY=value` lines. The controller writes them, quoted, to a `0600` file in the
-  guest home. Login shells load it; a systemd unit deletes it at shutdown.
+  guest home; login shells load it. SSH keys listed in the project config are
+  copied to the guest's `~/.ssh`. A systemd unit deletes both at shutdown.
 - Project tooling (`mise.toml`) is yours to run. The controller never touches it.
 
 ## Getting started

@@ -1,9 +1,10 @@
 # Quick start
 
 You need a running Debian 12 ARM64 Lima instance with a user that has
-passwordless sudo and `/usr/bin/python3`. Lima's Debian template gives you
-that. This guide assumes the instance is called `devbox` and the user is
-`aschuma`; set `LIMA_INSTANCE` and `LIMA_USER` if yours differ.
+passwordless sudo and `/usr/bin/python3`. This guide assumes the instance is
+called `devbox` and the user is `aschuma`. For provisioning, set
+`LIMA_INSTANCE` and `LIMA_USER` if yours differ; the CLI takes the instance
+from each project's `.devvm.toml`.
 
 ## 1. Host tools
 
@@ -85,10 +86,20 @@ the value is everything after the first `=`, verbatim.
 A typical resolver reads a 1Password item or an encrypted file. Unlock it
 beforehand; the script cannot prompt.
 
-Leave `resolver` out if the project has no secrets. SSH keys the project
-needs in the guest go in `[[ssh_keys]]` entries (`source = "~/.ssh/id_ed25519"`);
-port forwards and the key options are described in the
-[controller README](lima-debian-ctl/README.md#forwards).
+Leave `resolver` out if the project has no secrets.
+
+SSH keys the project needs in the guest go in one `[[ssh_keys]]` block each:
+
+```toml
+[[ssh_keys]]
+source = "~/.ssh/id_ed25519"
+
+[[ssh_keys]]
+source = "~/.ssh/id_ed25519_gh"
+```
+
+Details: [SSH keys](lima-debian-ctl/README.md#ssh-keys),
+[port forwards](lima-debian-ctl/README.md#forwards).
 
 Commit `.devvm.toml`. It contains no secrets.
 
@@ -116,19 +127,21 @@ Gradle daemon keeps its old environment until you restart it.
 ## 6. Refresh, switch, stop
 
 ```bash
-lima-debian-ctl provision   # rerun the resolver, replace the env file; no restart
+lima-debian-ctl provision   # rerun the resolver, replace env file and keys; no restart
 
 cd ~/Projects/other
 lima-debian-ctl activate    # switch: stop, swap mounts, start, provision
 
-lima-debian-ctl deactivate  # delete the env file, close tunnels, stop the VM
+lima-debian-ctl deactivate  # delete env file and keys, close tunnels, stop the VM
 ```
 
 The env file lives on the guest disk at
-`~/.config/lima-debian-ctl/environment.sh`. It is deleted on `deactivate`, on
-a clean shutdown, and on the next boot after an unclean one. Processes that
-already read it keep their values until they exit.
+`~/.config/lima-debian-ctl/environment.sh`, the keys in `~/.ssh`. Both are
+deleted on `deactivate`, on a clean shutdown, and on the next boot after an
+unclean one. Processes that already read them keep their values until they
+exit.
 
 If `activate` fails halfway, `status` says why. Fix the cause and run
 `activate` again; nothing is marked ready until mounts, env and tunnels all
-check out.
+check out. After editing `.devvm.toml`, run `activate`, not `provision`; it
+restarts the VM only if the mounts changed.

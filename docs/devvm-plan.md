@@ -117,7 +117,9 @@ Use a guest path outside all mounts, such as
 Developer ownership, directory 0700, file 0600; atomic replacement. No secrets in
 Lima YAML/cidata, command arguments, configuration backups, or controller logs.
 
-Resolver contract: UTF-8, split CR/LF/CRLF records, skip empty records, first `=`
+Resolver contract (as originally planned; the implementation later also
+accepts `#` comments and an `export ` prefix, and lets a repeated name take its
+last value — see the controller README): UTF-8, split CR/LF/CRLF records, skip empty records, first `=`
 separates name/value, validate shell identifiers, preserve literal value text
 including additional equals signs and surrounding spaces, reject duplicates,
 malformed records, NUL bytes, and multiline values. No shell expansion or raw
