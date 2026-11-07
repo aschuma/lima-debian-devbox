@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# Central tool version registry — the single place to change tool versions.
+#
+#   mise_runtimes  → installed by roles/runtimes   (tag: runtimes)
+#   mise_cli_tools → installed by roles/cli_tools  (tag: cli-tools)
+#
+# Both dicts are merged by roles/mise into the devbox user's global
+# ~/.config/mise/config.toml ([tools] section).
+#
+# Values are either a mise version spec ("21", "lts", "latest", "temurin-25")
+# or a mapping with `version` plus backend options (see mise docs).
+# Tool names are mise registry short names (`mise registry`) or explicit
+# backends (github:owner/repo, npm:package, aqua:owner/repo, ...).
+#
+# After changing a version: reprovision the existing guest with
+#   --tags mise,runtimes      (or --tags mise,cli-tools)
+# Inside the VM the same can be done ad hoc with `mise use -g <tool>@<ver>`.
+# =============================================================================
+
+mise_runtimes:
+  java: "temurin-25"
+  node: "lts"
+  gradle: "latest"
+  maven: "latest"
+  kotlin: "latest"
+  # CPython from prebuilt binaries (no compiler needed); becomes `python`/`pip`
+  python: "3.13"
+  "github:oracle/graalpython":
+    version: "latest"
+    version_prefix: "graal-"
+    asset_pattern: "graalpy*-community-{version}-linux-aarch64.tar.gz"
+
+mise_cli_tools:
+  gh: "latest"
+  aws-cli: "latest"
+  terraform: "latest"
+  uv: "latest"
+  ruff: "latest"
+  acli: "latest"
+  starship: "latest"
+  just: "1.59.0"
+  # AI coding assistants
+  copilot: "latest"
+  codex: "latest"
+  opencode: "latest"
+  pi: "latest"

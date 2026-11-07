@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  author: aschuma
+  description: Project environment loaders and lifecycle cleanup for lima-debian-ctl
+  license: MIT
+  min_ansible_version: '2.16'
+  platforms:
+    - name: Debian
+      versions: [bookworm]

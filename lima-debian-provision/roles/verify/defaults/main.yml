@@ -1,0 +1,8 @@
+---
+verify_commands: >-
+  {{ ['mise --version', 'mise doctor']
+     + (runtimes_verify_commands | default([]))
+     + (cli_tools_verify_commands | default([]))
+     + ((shell_verify_commands | default([])) if configure_shell | bool else [])
+     + (['docker info', 'docker compose version'] if install_docker | bool else [])
+     + ['sudo -n true'] }}

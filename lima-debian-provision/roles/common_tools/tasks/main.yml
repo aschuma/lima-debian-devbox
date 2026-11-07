@@ -1,0 +1,39 @@
+---
+- name: Install base CLI tools
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - jq
+      - git
+      - vim
+      - unzip
+      - zip
+      - net-tools
+      - dnsutils
+      - iputils-ping
+      - htop
+      - tree
+      - rsync
+      - gnupg
+      - acl
+      - bash-completion
+      - ca-certificates
+      - lsb-release
+      - apt-transport-https
+      - build-essential
+      - postgresql-client
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure Git defaults for {{ devbox_user }}
+  become: true
+  become_user: "{{ devbox_user }}"
+  community.general.git_config:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    scope: global
+  loop:
+    - { name: core.autocrlf, value: input }
+    - { name: init.defaultBranch, value: main }

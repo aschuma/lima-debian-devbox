@@ -1,3 +1,0 @@
----
-# Public key injected into the devbox user's authorized_keys (set by Packer)
-user_ssh_key_path: ""

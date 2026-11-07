@@ -1,0 +1,31 @@
+---
+- name: Check existing developer account and groups
+  ansible.builtin.command: id -nG {{ devbox_user }}
+  register: verify_groups
+  changed_when: false
+
+- name: Assert Docker group membership when Docker is enabled
+  ansible.builtin.assert:
+    that:
+      - "'docker' in verify_groups.stdout.split()"
+    fail_msg: "{{ devbox_user }} groups: {{ verify_groups.stdout }}"
+    success_msg: "{{ devbox_user }} groups: {{ verify_groups.stdout }}"
+  when: install_docker | bool
+
+- name: Verify installed tools
+  ansible.builtin.include_role:
+    name: mise
+    tasks_from: verify
+  vars:
+    mise_verify_commands: "{{ verify_commands }}"
+
+- name: List mise-managed tools
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc 'mise ls'
+  register: verify_mise_ls
+  changed_when: false
+
+- name: Show mise-managed tools
+  ansible.builtin.debug:
+    msg: "{{ verify_mise_ls.stdout_lines }}"

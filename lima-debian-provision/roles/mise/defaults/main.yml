@@ -1,0 +1,17 @@
+---
+mise_arch: "{{ target_arch }}"
+mise_keyring: /etc/apt/keyrings/mise-archive-keyring.gpg
+mise_gpg_url: https://mise.jdx.dev/gpg-key.pub
+mise_repo_url: https://mise.jdx.dev/deb
+
+# Global mise config for the devbox user
+mise_config_dir: "{{ devbox_home }}/.config/mise"
+mise_config_file: "{{ mise_config_dir }}/config.toml"
+
+# Guest-local paths only. Override this list with explicit guest project paths.
+mise_trusted_config_paths:
+  - "{{ devbox_home }}"
+
+# Tools written to the global config ([tools] section) — see
+# group_vars/all/tool_versions.yml for the definitions.
+mise_tools: "{{ mise_runtimes | default({}) | combine(mise_cli_tools | default({})) }}"

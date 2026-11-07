@@ -1,0 +1,60 @@
+---
+- name: Install project environment execution helper
+  ansible.builtin.copy:
+    src: lima-debian-ctl-guest
+    dest: /usr/local/bin/lima-debian-ctl-guest
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install project environment loader for login shells
+  ansible.builtin.copy:
+    src: lima-debian-ctl.sh
+    dest: /etc/profile.d/lima-debian-ctl.sh
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Load project environment before Bash interactive-only guards
+  ansible.builtin.blockinfile:
+    path: "{{ devbox_home }}/.bashrc"
+    insertbefore: BOF
+    marker: '# {mark} lima-debian-ctl environment'
+    block: |
+      [ ! -r /etc/profile.d/lima-debian-ctl.sh ] || . /etc/profile.d/lima-debian-ctl.sh
+    create: true
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0644'
+
+- name: Check whether zsh configuration directory exists
+  ansible.builtin.stat:
+    path: /etc/zsh
+  register: project_session_zsh
+
+- name: Load project environment for all zsh invocations
+  ansible.builtin.blockinfile:
+    path: /etc/zsh/zshenv
+    marker: '# {mark} lima-debian-ctl environment'
+    block: |
+      [ ! -r /etc/profile.d/lima-debian-ctl.sh ] || . /etc/profile.d/lima-debian-ctl.sh
+    create: true
+    owner: root
+    group: root
+    mode: '0644'
+  when: project_session_zsh.stat.isdir | default(false)
+
+- name: Install project credential lifecycle cleanup service
+  ansible.builtin.template:
+    src: lima-debian-ctl-session.service.j2
+    dest: /etc/systemd/system/lima-debian-ctl-session.service
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable project credential startup and shutdown cleanup
+  ansible.builtin.systemd_service:
+    name: lima-debian-ctl-session.service
+    enabled: true
+    state: started
+    daemon_reload: true

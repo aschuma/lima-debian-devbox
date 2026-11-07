@@ -1,9 +1,0 @@
----
-# All commands run in a login shell of the devbox user; any non-zero exit
-# fails the play (and therefore the Packer build).
-verify_commands: >-
-  {{ ['mise --version', 'mise doctor']
-     + runtimes_verify_commands | default([])
-     + cli_tools_verify_commands | default([])
-     + shell_verify_commands | default([])
-     + ['docker --version', 'docker compose version', 'sudo -n true'] }}
