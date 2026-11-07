@@ -46,8 +46,11 @@ func (c *Config) validateSSHKeys() error {
 		if k.Name == "" {
 			k.Name = filepath.Base(k.Source)
 		}
-		if !keyName.MatchString(k.Name) || strings.HasSuffix(k.Name, ".pub") {
-			return fmt.Errorf("ssh_keys[%d]: name must be a plain file name without .pub", i+1)
+		switch {
+		case strings.HasSuffix(k.Name, ".pub"):
+			return fmt.Errorf("ssh_keys[%d]: %q is a public key; point source at the private key (the .pub is copied automatically)", i+1, k.Name)
+		case !keyName.MatchString(k.Name):
+			return fmt.Errorf("ssh_keys[%d]: guest file name %q must start with a letter or digit and contain only letters, digits, '.', '_' or '-'; check source or set name", i+1, k.Name)
 		}
 		if seen[k.Name] {
 			return fmt.Errorf("ssh_keys[%d]: duplicate name %q", i+1, k.Name)
