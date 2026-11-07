@@ -243,6 +243,11 @@ const configTemplate = `schema_version = 1
 project = %s
 instance = %q
 
+# SSH: the host agent is forwarded into the guest (Lima ssh.forwardAgent), so
+# git/ssh use host keys and no private key is written to the VM. Default true.
+# Keep this above the first [[...]] table.
+#forward_agent = true
+
 [[mounts]]
 host = "."
 guest = %s
@@ -253,10 +258,6 @@ writable = true
 #[environment]
 #resolver = ["cat", "./env.1p"]
 #timeout_seconds = %d
-
-# Private keys copied to ~/.ssh in the guest (the .pub next to it too).
-#[[ssh_keys]]
-#source = "~/.ssh/id_ed25519"
 
 # Tunnels, loopback only. guest-to-host = ssh -R, host-to-guest = ssh -L.
 #[[forwards]]

@@ -8,7 +8,6 @@ LIMA_DEBIAN_CTL_HOME=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut
 LIMA_DEBIAN_CTL_DIR="$LIMA_DEBIAN_CTL_HOME/.config/lima-debian-ctl"
 LIMA_DEBIAN_CTL_FILE="$LIMA_DEBIAN_CTL_DIR/environment.sh"
 LIMA_DEBIAN_CTL_MOTD="$LIMA_DEBIAN_CTL_DIR/motd"
-LIMA_DEBIAN_CTL_KEYS="$LIMA_DEBIAN_CTL_DIR/ssh-keys"   # manifest of files we put in ~/.ssh
 
 check() {
     /usr/bin/systemctl is-active --quiet lima-debian-ctl-session.service
@@ -44,31 +43,7 @@ case "${1:-}" in
         /usr/bin/cat > "$LIMA_DEBIAN_CTL_TMP"
         /usr/bin/mv -f "$LIMA_DEBIAN_CTL_TMP" "$LIMA_DEBIAN_CTL_MOTD"
         ;;
-    ssh-key)
-        # Install one key file from stdin as ~/.ssh/NAME and record it.
-        check >/dev/null
-        [[ $# -eq 2 && "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,131}$ ]] || exit 2
-        umask 077
-        /usr/bin/install -d -m 0700 "$LIMA_DEBIAN_CTL_HOME/.ssh" "$LIMA_DEBIAN_CTL_DIR"
-        LIMA_DEBIAN_CTL_TMP=$(/usr/bin/mktemp "$LIMA_DEBIAN_CTL_HOME/.ssh/.key.XXXXXX")
-        trap '/usr/bin/rm -f "$LIMA_DEBIAN_CTL_TMP"' EXIT
-        /usr/bin/cat > "$LIMA_DEBIAN_CTL_TMP"
-        if [[ "$2" == *.pub ]]; then /usr/bin/chmod 0644 "$LIMA_DEBIAN_CTL_TMP"; else /usr/bin/chmod 0600 "$LIMA_DEBIAN_CTL_TMP"; fi
-        /usr/bin/mv -f "$LIMA_DEBIAN_CTL_TMP" "$LIMA_DEBIAN_CTL_HOME/.ssh/$2"
-        printf '%s\n' "$2" >> "$LIMA_DEBIAN_CTL_KEYS"
-        ;;
-    ssh-clear)
-        # Remove exactly the key files listed in the manifest, nothing else in ~/.ssh.
-        if [[ -r "$LIMA_DEBIAN_CTL_KEYS" ]]; then
-            while IFS= read -r name; do
-                [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,131}$ ]] && /usr/bin/rm -f "$LIMA_DEBIAN_CTL_HOME/.ssh/$name"
-            done < "$LIMA_DEBIAN_CTL_KEYS"
-            /usr/bin/rm -f "$LIMA_DEBIAN_CTL_KEYS"
-        fi
-        /usr/bin/rm -f "$LIMA_DEBIAN_CTL_HOME"/.ssh/.key.*
-        ;;
     clear)
-        "$0" ssh-clear
         /usr/bin/rm -f "$LIMA_DEBIAN_CTL_FILE" "$LIMA_DEBIAN_CTL_MOTD" "$LIMA_DEBIAN_CTL_DIR"/.environment.* "$LIMA_DEBIAN_CTL_DIR"/.motd.*
         ;;
     prune-mounts)
@@ -92,6 +67,9 @@ case "${1:-}" in
     exec)
         check >/dev/null
         [[ $# -ge 4 && -r "$LIMA_DEBIAN_CTL_FILE" ]] || exit 1
+        # Expose Lima's forwarded host agent to project commands and shells that
+        # bypass /etc/profile.d. Guarded so nothing is set when forwarding is off.
+        [[ -S /run/host-services/ssh-auth.sock ]] && export SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock
         LIMA_DEBIAN_CTL_EXPECTED=$2
         LIMA_DEBIAN_CTL_WORKDIR=$3
         shift 3
@@ -110,7 +88,7 @@ case "${1:-}" in
         exec -- "$@"
         ;;
     *)
-        printf 'Usage: lima-debian-ctl-guest check|provision|motd|ssh-key NAME|ssh-clear|clear|prune-mounts|status|exec PROJECT DIR COMMAND...\n' >&2
+        printf 'Usage: lima-debian-ctl-guest check|provision|motd|clear|prune-mounts|status|exec PROJECT DIR COMMAND...\n' >&2
         exit 2
         ;;
 esac

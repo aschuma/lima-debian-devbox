@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,6 +34,11 @@ type Instance struct {
 type instanceConfig struct {
 	Mounts       []Mount       `json:"mounts"`
 	PortForwards []portForward `json:"portForwards"`
+	SSH          instanceSSH   `json:"ssh"`
+}
+
+type instanceSSH struct {
+	ForwardAgent bool `json:"forwardAgent"`
 }
 
 // portForward mirrors the Lima rule fields needed to recognise the managed
@@ -68,10 +74,12 @@ func (p portForward) isIgnoreAll() bool {
 }
 
 // matchesProject reports whether the instance already carries exactly the
-// project's mounts and the managed forwarding policy.
+// project's mounts, the managed forwarding policy and its agent-forwarding
+// setting.
 func (i Instance) matchesProject(c Config) bool {
 	return mountsEqual(i.Config.Mounts, c.Mounts) &&
-		len(i.Config.PortForwards) == 1 && i.Config.PortForwards[0].isIgnoreAll()
+		len(i.Config.PortForwards) == 1 && i.Config.PortForwards[0].isIgnoreAll() &&
+		i.Config.SSH.ForwardAgent == c.forwardAgent()
 }
 
 func mountsEqual(a, b []Mount) bool {
@@ -102,10 +110,13 @@ func (l limaClient) Start(ctx context.Context, name string) error {
 	return l.run(ctx, "start", "--tty=false", name)
 }
 
-// Edit replaces the instance's mounts and forwarding policy. Lima refuses to
-// edit a running instance, so callers stop it first.
+// Edit replaces the instance's mounts and forwarding policy and sets SSH
+// agent forwarding from the project config. Lima refuses to edit a running
+// instance, so callers stop it first.
 func (l limaClient) Edit(ctx context.Context, c Config) error {
-	expr := ".mounts = " + jsonString(c.Mounts) + " | .portForwards = " + jsonString(ignoreAllForwards())
+	expr := ".mounts = " + jsonString(c.Mounts) +
+		" | .portForwards = " + jsonString(ignoreAllForwards()) +
+		" | .ssh.forwardAgent = " + strconv.FormatBool(c.forwardAgent())
 	return l.run(ctx, "edit", "--tty=false", "--set", expr, c.Instance)
 }
 

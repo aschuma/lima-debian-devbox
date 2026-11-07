@@ -1,27 +1,48 @@
 # Lima Debian dev VM
 
-One Debian 12 (ARM64) Lima VM, reused across projects. Only the active
-project's folders are mounted, and only its credentials and SSH keys are
-copied into the guest. The host home is never mounted.
+A development VM for macOS, built on [Lima](https://lima-vm.io/). One Debian 12
+(ARM64) VM, called `devbox`, serves all your projects. You switch the VM from
+one project to the next instead of running one VM per project.
 
-| Directory | What it does |
+## Why one shared VM
+
+Tools, caches and Docker images live on the VM disk. They are installed once
+and survive a project switch. What changes per project is small:
+
+- which host folders are mounted,
+- which credentials are present,
+- which ports are forwarded.
+
+The host home directory is never mounted. Only the active project's folders
+are visible inside the VM.
+
+## The two parts
+
+| Directory | Purpose |
 | --- | --- |
-| [`lima-debian-provision/`](lima-debian-provision/README.md) | Ansible. Installs Docker, mise-managed tools, zsh/Starship and the guest helpers into an existing VM. |
-| [`lima-debian-ctl/`](lima-debian-ctl/README.md) | Go CLI. Switches the VM between projects: mounts, credentials, SSH tunnels, shell. |
+| [`lima-debian-provision/`](lima-debian-provision/README.md) | Ansible. Installs Docker, a mise toolchain, zsh with Starship and the guest helpers into an existing VM. Run it once, and again when tool versions change. |
+| [`lima-debian-ctl/`](lima-debian-ctl/README.md) | Go CLI. Switches the VM between projects: mounts, credentials, port forwards, shell. Run it every day. |
 
 ## How it works
 
-- Provisioning runs against a VM and user that already exist. It never creates
-  or starts VMs and never changes SSH access.
-- `lima-debian-ctl activate` makes the current project the VM's only project.
-  Switching projects stops the VM, replaces its mounts and starts it again
-  (Lima cannot change mounts while running). Refreshing credentials for the
-  active project needs no restart.
-- Credentials come from a script you configure. It runs on the host and prints
-  `KEY=value` lines. The controller writes them, quoted, to a `0600` file in the
-  guest home; login shells load it. SSH keys listed in the project config are
-  copied to the guest's `~/.ssh`. A systemd unit deletes both at shutdown.
-- Project tooling (`mise.toml`) is yours to run. The controller never touches it.
+**Provisioning** runs against a VM and user that already exist. It never
+creates or starts a VM and never changes SSH access.
+
+**Activating a project** (`lima-debian-ctl activate`) makes that project the
+VM's only project. If the mounts change, the VM is stopped, edited and started
+again, because Lima cannot change mounts while a VM runs. Refreshing
+credentials for the active project needs no restart.
+
+**Credentials** come from a script you write. It runs on the host and prints
+`KEY=value` lines. The controller writes them to a `0600` file in the guest
+home. Login shells load that file. A systemd unit deletes it at shutdown.
+
+**SSH** inside the guest uses your host SSH agent through Lima's agent
+forwarding. No private key is copied into the VM. This is on by default and
+can be turned off per project with `forward_agent = false`.
+
+**Project tooling** such as `mise.toml` is yours to run. The controller does
+not touch it.
 
 ## Getting started
 
@@ -49,8 +70,14 @@ just build      # lima-debian-ctl/bin/lima-debian-ctl
 
 None of these touch a VM. `just provision` and `just smoke` do.
 
-Design notes: [docs/devvm-plan.md](docs/devvm-plan.md),
-[docs/research/lima-project-environment.md](docs/research/lima-project-environment.md).
+## Design notes
+
+- [docs/devvm-plan.md](docs/devvm-plan.md) — requirements and design of the
+  controller.
+- [docs/research/lima-project-environment.md](docs/research/lima-project-environment.md)
+  — why credentials are handled the way they are.
+- [docs/research/lima-native-features.md](docs/research/lima-native-features.md)
+  — which Lima features the project uses natively and which it builds itself.
 
 ## License
 

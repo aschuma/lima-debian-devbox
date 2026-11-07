@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,6 @@ type fakeMachine struct {
 	brokenLoader  bool
 	guestPortBusy bool
 	boot          string
-	keys          map[string]string // guest ~/.ssh contents
 }
 
 // activate computes one reconciliation and applies it, like the CLI does.
@@ -36,6 +36,7 @@ func activate(t *testing.T, a Controller, ctx context.Context, c Config, approve
 
 func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 	f.calls = append(f.calls, c)
+	var err error
 	if c.Name == "resolver" {
 		if f.failResolver {
 			return Result{Code: 1, Stderr: "SECRET=never-log"}, nil
@@ -56,7 +57,13 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 			f.boot = "new-boot"
 			return Result{}, nil
 		case "edit":
-			expression := c.Args[3]
+			expression, agent, ok := strings.Cut(c.Args[3], " | .ssh.forwardAgent = ")
+			if !ok {
+				return Result{}, fmt.Errorf("edit expression lacks ssh.forwardAgent")
+			}
+			if f.inst.Config.SSH.ForwardAgent, err = strconv.ParseBool(agent); err != nil {
+				return Result{}, err
+			}
 			mounts, forwards, ok := strings.Cut(strings.TrimPrefix(expression, ".mounts = "), " | .portForwards = ")
 			if !ok {
 				return Result{}, fmt.Errorf("invalid edit expression")
@@ -81,19 +88,6 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 		case strings.Contains(remote, "guest clear"):
 			f.project = ""
 			f.payload = ""
-			f.keys = nil
-			return Result{}, nil
-		case strings.Contains(remote, "guest ssh-clear"):
-			f.keys = map[string]string{}
-			return Result{}, nil
-		case strings.Contains(remote, "guest ssh-key "):
-			// remote is: /bin/bash ... -c '<helper> ssh-key '"'"'NAME'"'"''  — recover NAME.
-			rest := remote[strings.Index(remote, "ssh-key ")+len("ssh-key "):]
-			name := strings.Trim(strings.ReplaceAll(rest, `'"'"'`, ""), "'")
-			if f.keys == nil {
-				f.keys = map[string]string{}
-			}
-			f.keys[name] = c.Input
 			return Result{}, nil
 		case strings.Contains(remote, "guest motd"):
 			if strings.Contains(c.Input, "secret") {
@@ -323,55 +317,71 @@ func TestStoppedVMMountReplacementRequiresApproval(t *testing.T) {
 	}
 }
 
-func TestSSHKeysProvisionedAndReplaced(t *testing.T) {
+func TestForwardAgentDefaultsOnAndIsApplied(t *testing.T) {
 	a, c, f := testController(t)
 	ctx := context.Background()
-	keyDir := t.TempDir()
-	for name, body := range map[string]string{"id_a": "PRIVATE-A", "id_a.pub": "PUBLIC-A", "id_b": "PRIVATE-B"} {
-		if err := os.WriteFile(filepath.Join(keyDir, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
+	if !c.forwardAgent() {
+		t.Fatal("forward_agent must default to true when unset")
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.inst.Config.SSH.ForwardAgent {
+		t.Fatal("activate did not enable ssh.forwardAgent on the instance")
+	}
+	// No private key material may ever be sent to the guest.
+	for _, call := range f.calls {
+		if call.Name == "ssh" && strings.Contains(call.Args[len(call.Args)-1], "ssh-key") {
+			t.Fatal("controller still uploads SSH keys")
 		}
-	}
-	c.SSHKeys = []SSHKey{{Source: filepath.Join(keyDir, "id_a")}, {Source: filepath.Join(keyDir, "id_b"), Name: "deploy"}}
-	if err := c.validateSSHKeys(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := activate(t, a, ctx, c, true); err != nil {
-		t.Fatal(err)
-	}
-	if f.keys["id_a"] != "PRIVATE-A" || f.keys["id_a.pub"] != "PUBLIC-A" || f.keys["deploy"] != "PRIVATE-B" || len(f.keys) != 3 {
-		t.Fatalf("keys not installed as configured: %v", f.keys)
-	}
-	// Dropping a key from the config removes it on the next provision.
-	c.SSHKeys = c.SSHKeys[:1]
-	if _, err := activate(t, a, ctx, c, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, still := f.keys["deploy"]; still || len(f.keys) != 2 {
-		t.Fatalf("removed key still present: %v", f.keys)
-	}
-	if _, err := a.Stop(ctx, c); err != nil {
-		t.Fatal(err)
-	}
-	if f.keys != nil {
-		t.Fatal("keys survived deactivate")
 	}
 }
 
-func TestSSHKeyValidation(t *testing.T) {
+func TestForwardAgentOffForcesEditAndRestart(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	stops := countCalls(f, "limactl", "stop")
+	// Flipping the flag is config drift: the VM must be edited again.
+	off := false
+	c.ForwardAgent = &off
+	rec, err := a.plan(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Plan.Edit || !rec.Plan.Restart {
+		t.Fatalf("changing forward_agent must plan an edit+restart: %+v", rec.Plan)
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.inst.Config.SSH.ForwardAgent || countCalls(f, "limactl", "stop") != stops+1 {
+		t.Fatalf("forward_agent=false not applied: agent=%v", f.inst.Config.SSH.ForwardAgent)
+	}
+}
+
+func TestForwardAgentParsedFromTOML(t *testing.T) {
 	c := testConfig(t, "p")
-	for _, bad := range []SSHKey{{Source: ""}, {Source: "/x", Name: "../etc"}, {Source: "/x", Name: "k.pub"}} {
-		c.SSHKeys = []SSHKey{bad}
-		if err := c.validateSSHKeys(); err == nil {
-			t.Fatalf("accepted %+v", bad)
+	base := "schema_version=1\nproject='p'\n"
+	mounts := "[[mounts]]\nhost='.'\nguest='/work/p'\nwritable=true\n"
+	for text, want := range map[string]bool{base + mounts: true, base + "forward_agent=false\n" + mounts: false, base + "forward_agent=true\n" + mounts: true} {
+		if err := os.WriteFile(c.File, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadConfig(c.File)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ForwardAgent == nil || *got.ForwardAgent != want || got.forwardAgent() != want {
+			t.Fatalf("forward_agent parsed wrong for %q: %v", text, got.ForwardAgent)
 		}
 	}
-	c.SSHKeys = []SSHKey{{Source: "~/.ssh/id_x"}, {Source: "./k/id_x"}}
-	if err := c.validateSSHKeys(); err == nil {
-		t.Fatal("accepted duplicate target name")
+	if err := os.WriteFile(c.File, []byte(base+mounts+"[[ssh_keys]]\nsource='~/.ssh/id'\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	c.SSHKeys = []SSHKey{{Source: "./k/id_x"}}
-	if err := c.validateSSHKeys(); err != nil || c.SSHKeys[0].Source != filepath.Join(c.Root, "k/id_x") || c.SSHKeys[0].Name != "id_x" {
-		t.Fatalf("relative source not resolved: %+v %v", c.SSHKeys[0], err)
+	if _, err := loadConfig(c.File); err == nil {
+		t.Fatal("removed ssh_keys table must be rejected as unknown")
 	}
 }

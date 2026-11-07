@@ -80,9 +80,8 @@ func renderEnvironment(env map[string]string, project string) string {
 // payload is what gets uploaded to the guest: the environment file and a
 // non-secret banner describing the session.
 type payload struct {
-	Environment string    // shell exports; contains the secret values
-	Keys        []keyFile // private keys for ~/.ssh
-	MOTD        string    // shown by `shell`; names only, never values
+	Environment string // shell exports; contains the secret values
+	MOTD        string // shown by `shell`; names only, never values
 }
 
 // resolveEnvironment runs the project's resolver on the host and renders its
@@ -100,11 +99,7 @@ func resolveEnvironment(ctx context.Context, r Runner, c Config) (payload, error
 			return payload{}, err
 		}
 	}
-	keys, err := loadSSHKeys(c.SSHKeys)
-	if err != nil {
-		return payload{}, err
-	}
-	return payload{Environment: renderEnvironment(env, c.Project), Keys: keys, MOTD: renderMOTD(c, env)}, nil
+	return payload{Environment: renderEnvironment(env, c.Project), MOTD: renderMOTD(c, env)}, nil
 }
 
 // renderMOTD builds the banner printed by `lima-debian-ctl shell`: one item
@@ -160,12 +155,10 @@ func renderMOTD(c Config, env map[string]string) string {
 	} else {
 		row("Env", dim+"(none)"+reset)
 	}
-	if len(c.SSHKeys) > 0 {
-		names := make([]string, len(c.SSHKeys))
-		for i, k := range c.SSHKeys {
-			names[i] = "~/.ssh/" + k.Name
-		}
-		row("SSH key", names...)
+	if c.forwardAgent() {
+		row("SSH agent", "forwarded from host "+dim+"(/run/host-services/ssh-auth.sock)"+reset)
+	} else {
+		row("SSH agent", dim+"off (forward_agent = false)"+reset)
 	}
 	row("Refresh", dim+"lima-debian-ctl provision"+reset)
 	b.WriteString("\n")

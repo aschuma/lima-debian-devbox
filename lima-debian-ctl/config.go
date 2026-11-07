@@ -68,10 +68,16 @@ type Config struct {
 	Mounts        []Mount     `toml:"mounts" json:"mounts"`
 	Environment   Environment `toml:"environment" json:"environment"`
 	Forwards      []Forward   `toml:"forwards" json:"forwards"`
-	SSHKeys       []SSHKey    `toml:"ssh_keys" json:"ssh_keys"`
-	Root          string      `toml:"-" json:"root"`
-	File          string      `toml:"-" json:"file"`
+	// ForwardAgent enables Lima's ssh.forwardAgent so guest git/ssh use the
+	// host agent through /run/host-services/ssh-auth.sock; no private key is
+	// ever written to the guest. nil means unset and defaults to true.
+	ForwardAgent *bool  `toml:"forward_agent" json:"forward_agent"`
+	Root         string `toml:"-" json:"root"`
+	File         string `toml:"-" json:"file"`
 }
+
+// forwardAgent returns the effective agent-forwarding setting (default on).
+func (c Config) forwardAgent() bool { return c.ForwardAgent == nil || *c.ForwardAgent }
 
 func (c Config) resolverTimeout() time.Duration {
 	return time.Duration(c.Environment.TimeoutSeconds) * time.Second
@@ -111,6 +117,10 @@ func loadConfig(filename string) (Config, error) {
 	if c.Environment.TimeoutSeconds == 0 {
 		c.Environment.TimeoutSeconds = defaultTimeoutSecs
 	}
+	if c.ForwardAgent == nil {
+		on := true
+		c.ForwardAgent = &on
+	}
 	return c, c.validate()
 }
 
@@ -146,9 +156,6 @@ func (c *Config) validate() error {
 		return err
 	}
 	if err := c.validateResolver(); err != nil {
-		return err
-	}
-	if err := c.validateSSHKeys(); err != nil {
 		return err
 	}
 	return c.validateForwards()
