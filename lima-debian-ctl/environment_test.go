@@ -58,6 +58,19 @@ func TestRenderedExportsAreLiteralInBashAndZsh(t *testing.T) {
 		}
 	}
 }
+func TestMOTDNamesOnly(t *testing.T) {
+	c := Config{Project: "p", Mounts: []Mount{{Host: "/h", Guest: "/work/p", Writable: true}}, Forwards: []Forward{{Direction: GuestToHost, ListenPort: 1080, TargetHost: "127.0.0.1", TargetPort: 1080}}}
+	motd := renderMOTD(c, map[string]string{"TOKEN": "s3cret"})
+	for _, want := range []string{"Project  p", "/work/p", "guest:1080 -> host", "Env      TOKEN"} {
+		if !strings.Contains(motd, want) {
+			t.Fatalf("motd missing %q:\n%s", want, motd)
+		}
+	}
+	if strings.Contains(motd, "s3cret") {
+		t.Fatal("motd contains a value")
+	}
+}
+
 func TestResolverFailureWithholdsOutput(t *testing.T) {
 	r := runnerFunc(func(_ context.Context, c Command) (Result, error) {
 		return Result{Stdout: "SECRET=do-not-log", Stderr: "do-not-log", Code: 1}, nil

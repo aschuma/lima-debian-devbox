@@ -95,7 +95,7 @@ Commit `.devvm.toml`. It contains no secrets.
 ```bash
 lima-debian-ctl plan       # what activate would do; no changes
 lima-debian-ctl activate   # asks before stopping the VM or replacing mounts
-lima-debian-ctl shell      # login shell in /work/service-a with the env loaded
+lima-debian-ctl shell      # banner, then a login shell in /work/service-a
 lima-debian-ctl exec -- ./gradlew test
 ```
 

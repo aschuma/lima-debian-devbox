@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -77,22 +78,59 @@ func renderEnvironment(env map[string]string, project string) string {
 	return b.String()
 }
 
+// payload is what gets uploaded to the guest: the environment file and a
+// non-secret banner describing the session.
+type payload struct {
+	Environment string // shell exports; contains the secret values
+	MOTD        string // shown by `shell`; names only, never values
+}
+
 // resolveEnvironment runs the project's resolver on the host and renders its
 // output. Resolver stdout/stderr are withheld from errors.
-func resolveEnvironment(ctx context.Context, r Runner, c Config) (string, error) {
-	resolver := c.Environment.Resolver
-	if len(resolver) == 0 {
-		return renderEnvironment(nil, c.Project), nil
+func resolveEnvironment(ctx context.Context, r Runner, c Config) (payload, error) {
+	env := map[string]string{}
+	if resolver := c.Environment.Resolver; len(resolver) > 0 {
+		ctx, cancel := context.WithTimeout(ctx, c.resolverTimeout())
+		defer cancel()
+		text, err := run(ctx, r, Command{Name: resolver[0], Args: resolver[1:], Dir: c.Root, Limit: environmentLimit})
+		if err != nil {
+			return payload{}, fmt.Errorf("credential resolver failed (output withheld): %w", err)
+		}
+		if env, err = parseEnvironment(text); err != nil {
+			return payload{}, err
+		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.resolverTimeout())
-	defer cancel()
-	text, err := run(ctx, r, Command{Name: resolver[0], Args: resolver[1:], Dir: c.Root, Limit: environmentLimit})
-	if err != nil {
-		return "", fmt.Errorf("credential resolver failed (output withheld): %w", err)
+	return payload{Environment: renderEnvironment(env, c.Project), MOTD: renderMOTD(c, env)}, nil
+}
+
+// renderMOTD builds the banner printed by `lima-debian-ctl shell`.
+func renderMOTD(c Config, env map[string]string) string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
 	}
-	env, err := parseEnvironment(text)
-	if err != nil {
-		return "", err
+	sort.Strings(keys)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Project  %s  (lima-debian-ctl, activated %s)\n", c.Project, time.Now().Format("2006-01-02 15:04"))
+	for _, m := range c.Mounts {
+		mode := "rw"
+		if !m.Writable {
+			mode = "ro"
+		}
+		fmt.Fprintf(&b, "Mount    %-28s <- %s (%s)\n", m.Guest, m.Host, mode)
 	}
-	return renderEnvironment(env, c.Project), nil
+	for _, f := range c.Forwards {
+		if f.Direction == GuestToHost {
+			fmt.Fprintf(&b, "Forward  guest:%d -> host %s:%d\n", f.ListenPort, f.TargetHost, f.TargetPort)
+		} else {
+			fmt.Fprintf(&b, "Forward  host:%d -> guest %s:%d\n", f.ListenPort, f.TargetHost, f.TargetPort)
+		}
+	}
+	if len(keys) > 0 {
+		fmt.Fprintf(&b, "Env      %s\n", strings.Join(keys, " "))
+	} else {
+		b.WriteString("Env      (none)\n")
+	}
+	b.WriteString("Refresh  lima-debian-ctl provision   Tools: run mise yourself\n")
+	return b.String()
 }

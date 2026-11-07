@@ -81,6 +81,11 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 			f.project = ""
 			f.payload = ""
 			return Result{}, nil
+		case strings.Contains(remote, "guest motd"):
+			if strings.Contains(c.Input, "secret") {
+				return Result{}, fmt.Errorf("motd leaked a value")
+			}
+			return Result{}, nil
 		case strings.Contains(remote, "guest provision"):
 			if f.failProvision {
 				return Result{Code: 1}, nil

@@ -7,6 +7,7 @@ LIMA_DEBIAN_CTL_HOME=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut
 [[ -n "$LIMA_DEBIAN_CTL_HOME" && "$LIMA_DEBIAN_CTL_HOME" != / ]] || exit 1
 LIMA_DEBIAN_CTL_DIR="$LIMA_DEBIAN_CTL_HOME/.config/lima-debian-ctl"
 LIMA_DEBIAN_CTL_FILE="$LIMA_DEBIAN_CTL_DIR/environment.sh"
+LIMA_DEBIAN_CTL_MOTD="$LIMA_DEBIAN_CTL_DIR/motd"
 
 check() {
     /usr/bin/systemctl is-active --quiet lima-debian-ctl-session.service
@@ -32,8 +33,18 @@ case "${1:-}" in
         /usr/bin/chmod 0600 "$LIMA_DEBIAN_CTL_TMP"
         /usr/bin/mv -f "$LIMA_DEBIAN_CTL_TMP" "$LIMA_DEBIAN_CTL_FILE"
         ;;
+    motd)
+        # Non-secret banner rendered by the host controller; shown by exec --shell.
+        check >/dev/null
+        umask 077
+        /usr/bin/install -d -m 0700 "$LIMA_DEBIAN_CTL_DIR"
+        LIMA_DEBIAN_CTL_TMP=$(/usr/bin/mktemp "$LIMA_DEBIAN_CTL_DIR/.motd.XXXXXX")
+        trap '/usr/bin/rm -f "$LIMA_DEBIAN_CTL_TMP"' EXIT
+        /usr/bin/cat > "$LIMA_DEBIAN_CTL_TMP"
+        /usr/bin/mv -f "$LIMA_DEBIAN_CTL_TMP" "$LIMA_DEBIAN_CTL_MOTD"
+        ;;
     clear)
-        /usr/bin/rm -f "$LIMA_DEBIAN_CTL_FILE" "$LIMA_DEBIAN_CTL_DIR"/.environment.*
+        /usr/bin/rm -f "$LIMA_DEBIAN_CTL_FILE" "$LIMA_DEBIAN_CTL_MOTD" "$LIMA_DEBIAN_CTL_DIR"/.environment.* "$LIMA_DEBIAN_CTL_DIR"/.motd.*
         ;;
     prune-mounts)
         # Lima leaves empty mountpoint directories behind after a mount is
@@ -65,6 +76,7 @@ case "${1:-}" in
         [[ "${LIMA_DEBIAN_CTL_PROJECT:-}" == "$LIMA_DEBIAN_CTL_EXPECTED" ]] || exit 1
         cd -- "$LIMA_DEBIAN_CTL_WORKDIR"
         if [[ "$1" == --shell && $# -eq 1 ]]; then
+            [[ -r "$LIMA_DEBIAN_CTL_MOTD" ]] && /usr/bin/cat "$LIMA_DEBIAN_CTL_MOTD"
             LIMA_DEBIAN_CTL_SHELL=$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f7)
             exec "$LIMA_DEBIAN_CTL_SHELL" -l
         fi
@@ -73,7 +85,7 @@ case "${1:-}" in
         exec -- "$@"
         ;;
     *)
-        printf 'Usage: lima-debian-ctl-guest check|provision|clear|prune-mounts|status|exec PROJECT DIR COMMAND...\n' >&2
+        printf 'Usage: lima-debian-ctl-guest check|provision|motd|clear|prune-mounts|status|exec PROJECT DIR COMMAND...\n' >&2
         exit 2
         ;;
 esac

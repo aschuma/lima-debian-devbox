@@ -46,9 +46,12 @@ func (g guest) BootID(ctx context.Context) (string, error) {
 	return g.helper(ctx, "check", "")
 }
 
-// Provision installs the rendered environment file atomically.
-func (g guest) Provision(ctx context.Context, payload string) error {
-	_, err := g.helper(ctx, "provision", payload)
+// Provision installs the environment file and the banner atomically.
+func (g guest) Provision(ctx context.Context, p payload) error {
+	if _, err := g.helper(ctx, "provision", p.Environment); err != nil {
+		return err
+	}
+	_, err := g.helper(ctx, "motd", p.MOTD)
 	return err
 }
 

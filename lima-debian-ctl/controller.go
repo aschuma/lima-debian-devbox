@@ -90,7 +90,7 @@ func (a Controller) Activate(ctx context.Context, c Config, rec Reconciliation, 
 		}
 	}
 	// Resolve before disrupting the old session; values never enter host state.
-	payload, err := resolveEnvironment(ctx, a.Runner, c)
+	upload, err := resolveEnvironment(ctx, a.Runner, c)
 	if err != nil {
 		return state, err
 	}
@@ -117,7 +117,7 @@ func (a Controller) Activate(ctx context.Context, c Config, rec Reconciliation, 
 	if inst, err = a.switchInstance(ctx, c, p, inst); err != nil {
 		return state, err
 	}
-	if state.BootID, err = a.installProject(ctx, c, inst, payload); err != nil {
+	if state.BootID, err = a.installProject(ctx, c, inst, upload); err != nil {
 		return state, err
 	}
 	state.Phase = PhaseReady
@@ -157,14 +157,14 @@ func (a Controller) switchInstance(ctx context.Context, c Config, p Plan, inst I
 
 // installProject provisions the environment, opens tunnels and verifies
 // both loading paths. It returns the guest boot ID that readiness is tied to.
-func (a Controller) installProject(ctx context.Context, c Config, inst Instance, payload string) (string, error) {
+func (a Controller) installProject(ctx context.Context, c Config, inst Instance, p payload) (string, error) {
 	g := a.guest(inst)
 	bootID, err := g.BootID(ctx)
 	if err != nil {
 		return "", fmt.Errorf("guest helpers unavailable; apply Ansible --tags project-session first: %w", err)
 	}
 	_ = g.PruneMounts(ctx) // cosmetic: stale mountpoint dirs from previous projects
-	if err := g.Provision(ctx, payload); err != nil {
+	if err := g.Provision(ctx, p); err != nil {
 		return "", err
 	}
 	if err := a.tunnels(inst).Start(ctx, c.Forwards); err != nil {
@@ -230,11 +230,11 @@ func (a Controller) Provision(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
-	payload, err := resolveEnvironment(ctx, a.Runner, c)
+	p, err := resolveEnvironment(ctx, a.Runner, c)
 	if err != nil {
 		return err
 	}
-	if err := a.guest(inst).Provision(ctx, payload); err != nil {
+	if err := a.guest(inst).Provision(ctx, p); err != nil {
 		return err
 	}
 	return a.verifyEnvironment(ctx, inst, c)

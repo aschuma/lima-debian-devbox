@@ -25,7 +25,7 @@ and a systemd unit. `activate` refuses to run against a VM that lacks them.
 | `activate` | Make this project the VM's active project. Prompts if it has to stop the VM or replace mounts; `--yes` skips the prompt. |
 | `provision` | Rerun the resolver and replace the env file. No restart. |
 | `status` | Ready or not, and why. |
-| `shell` | Login shell in the project directory. |
+| `shell` | Login shell in the project directory, after a short banner: mounts, forwards, variable names. |
 | `exec -- CMD...` | Run a command there. Exit code is passed through. |
 | `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
 
@@ -102,7 +102,8 @@ here. Lima's SSH port is unaffected.
    file, `limactl stop`, `limactl edit --set` mounts and forwarding policy,
    `limactl start`, waits for SSH.
 5. Uploads the env file (`0600`, atomic rename) to
-   `~/.config/lima-debian-ctl/environment.sh` in the guest.
+   `~/.config/lima-debian-ctl/environment.sh` in the guest, plus a `motd`
+   next to it with the project, mounts, forwards and variable *names*.
 6. Opens the tunnels on a private control socket. `-L` failures abort via
    `ExitOnForwardFailure`; `-R` listeners are checked with `ss` on the guest
    because sshd only warns when a bind fails.
