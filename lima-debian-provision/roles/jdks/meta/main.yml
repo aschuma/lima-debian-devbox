@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  author: aschuma
+  description: Links mise-installed JDKs into ~/.jdks for IntelliJ, with a justfile to refresh them
+  license: MIT
+  min_ansible_version: '2.16'
+  platforms:
+    - name: Debian
+      versions: [bookworm]

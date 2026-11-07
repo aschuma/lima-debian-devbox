@@ -1,0 +1,33 @@
+---
+- name: Create ~/.jdks for IntelliJ JDK detection
+  ansible.builtin.file:
+    path: "{{ devbox_home }}/.jdks"
+    state: directory
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0755'
+
+- name: Install justfile that links mise JDKs into ~/.jdks
+  ansible.builtin.copy:
+    src: justfile
+    dest: "{{ devbox_home }}/.jdks/justfile"
+    owner: "{{ devbox_user }}"
+    group: "{{ devbox_group }}"
+    mode: '0644'
+
+- name: Link installed mise JDKs into ~/.jdks
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc 'cd ~/.jdks && just update'
+  changed_when: false
+
+- name: List linked JDKs
+  become: true
+  become_user: "{{ devbox_user }}"
+  ansible.builtin.command: bash -lc 'ls -1 ~/.jdks | grep "^mise-" || true'
+  register: jdks_links
+  changed_when: false
+
+- name: Show linked JDKs
+  ansible.builtin.debug:
+    msg: "{{ jdks_links.stdout_lines | default(['none']) }}"

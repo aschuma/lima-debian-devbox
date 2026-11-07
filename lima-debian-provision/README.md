@@ -39,7 +39,7 @@ Settings, as environment variables or in a gitignored `provision.env`:
 ## Roles and tags
 
 Order: `common-tools` → `docker` → `mise` → `runtimes` → `cli-tools` →
-`shell` → `project-session` → `verify`. Preflight always runs. Tags can be
+`jdks` → `shell` → `project-session` → `verify`. Preflight always runs. Tags can be
 rerun on their own, but later roles assume earlier ones have been applied.
 
 ```bash
@@ -58,6 +58,11 @@ mise trusts only the guest home by default. For project files elsewhere:
 ```bash
 ./lima-debian-provision/provision.sh -e '{"mise_trusted_config_paths":["/home/aschuma.guest","/work"]}'
 ```
+
+`jdks` creates `~/.jdks` with symlinks `mise-<version>` to every mise-installed
+JDK, which is where IntelliJ looks for JDKs. The links are made by a justfile in
+that directory; after installing another JDK run `just -f ~/.jdks/justfile`
+in the guest to refresh them.
 
 `project-session` installs `/usr/local/bin/lima-debian-ctl-guest`, the shell
 loaders for the controller's env file, and a systemd unit that deletes that

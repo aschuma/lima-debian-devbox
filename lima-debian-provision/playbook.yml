@@ -93,6 +93,8 @@
       tags: [runtimes]
     - role: cli_tools
       tags: [cli-tools]
+    - role: jdks
+      tags: [jdks]
     - role: shell
       when: configure_shell | bool
       tags: [shell]

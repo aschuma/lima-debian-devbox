@@ -1,0 +1,19 @@
+# Link all mise-installed JDKs into ~/.jdks so IntelliJ detects them
+default: update
+
+# Remove every mise-* link from ~/.jdks
+clean:
+    #!/usr/bin/env sh
+    find ~/.jdks -maxdepth 1 -type l -name 'mise-*' -delete
+
+# Recreate links for all installed mise JDKs
+update: clean
+    #!/usr/bin/env sh
+    mkdir -p ~/.jdks
+    for d in "${MISE_DATA_DIR:-$HOME/.local/share/mise}"/installs/java/*; do
+      [ -e "$d" ] || continue                       # no JDKs installed
+      [ -L "$d" ] && continue                       # skip alias symlinks like "21"
+      name="mise-$(basename "$d")"
+      [ -d "$d/Contents/Home" ] && d="$d/Contents/Home"   # macOS vendor layout
+      ln -sfn "$d" ~/.jdks/"$name"
+    done
