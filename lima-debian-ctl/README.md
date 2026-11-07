@@ -23,7 +23,7 @@ and a systemd unit. `activate` refuses to run against a VM that lacks them.
 | `init` | Write a `.devvm.toml` stub. Refuses to overwrite. |
 | `plan` | Show what `activate` would do. Reads only; does not run the resolver. |
 | `activate` | Make this project the VM's active project. Prompts if it has to stop the VM or replace mounts; `--yes` skips the prompt. |
-| `provision` | Rerun the resolver and replace the env file. No restart. |
+| `provision` | Rerun the resolver, replace the env file and SSH keys. No restart. |
 | `status` | Ready or not, and why. |
 | `shell` | Login shell in the project directory, after a short banner: mounts, forwards, variable names. |
 | `exec -- CMD...` | Run a command there. Exit code is passed through. |
@@ -55,6 +55,10 @@ direction = "guest-to-host"        # or host-to-guest
 listen_port = 1080                 # 1024..65535, binds 127.0.0.1
 target_host = "127.0.0.1"
 target_port = 1080
+
+[[ssh_keys]]
+source = "~/.ssh/id_ed25519"       # host path; "./x" is relative to this file
+# name = "id_ed25519"              # file name under ~/.ssh in the guest
 ```
 
 Rejected: unknown keys, mounts that overlap, mounts that would expose the host
@@ -75,12 +79,22 @@ EMPTY=
 One record per line, CR, LF or CRLF. Blank lines, `#` comments and a leading
 `export ` are ignored, so a plain `.env` file works. The key is a shell
 identifier; the value is the rest of the line, untouched — quotes are kept,
-nothing is interpolated. Duplicates, bad names, NUL bytes, non-UTF-8 and output over
-1 MiB are errors. `HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only
+nothing is interpolated. A name that appears twice takes its last value.
+Bad names, NUL bytes, non-UTF-8 and output over 1 MiB are errors. `HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only
 bash/zsh variables and anything starting with `LIMA_DEBIAN_CTL_` are reserved.
 On error the existing env file is left alone and no output is echoed.
 
 The resolver is code you run. Read it before activating someone else's project.
+
+### SSH keys
+
+Each `ssh_keys` entry is a private key on the host. At `activate` and
+`provision` it is copied to `~/.ssh/<name>` in the guest with mode `0600`; a
+`<source>.pub` next to it is copied as `<name>.pub`. Keys are tracked in a
+manifest, so a key you remove from the config disappears on the next
+`provision`, and all of them go with the env file on `deactivate`, shutdown
+and boot. Files in `~/.ssh` that the controller did not install are never
+touched. Keys sit on the guest disk, same as the env file.
 
 ### Forwards
 
@@ -102,8 +116,9 @@ here. Lima's SSH port is unaffected.
    file, `limactl stop`, `limactl edit --set` mounts and forwarding policy,
    `limactl start`, waits for SSH.
 5. Uploads the env file (`0600`, atomic rename) to
-   `~/.config/lima-debian-ctl/environment.sh` in the guest, plus a `motd`
-   next to it with the project, mounts, forwards and variable *names*.
+   `~/.config/lima-debian-ctl/environment.sh` in the guest, the configured
+   SSH keys to `~/.ssh`, and a `motd` with the project, mounts, forwards,
+   variable *names* and key names.
 6. Opens the tunnels on a private control socket. `-L` failures abort via
    `ExitOnForwardFailure`; `-R` listeners are checked with `ss` on the guest
    because sshd only warns when a bind fails.

@@ -248,17 +248,22 @@ host = "."
 guest = %s
 writable = true
 
-[environment]
-# Runs on the host from this directory without a terminal.
-# Output: literal KEY=value records (CR, LF or CRLF separated).
-# resolver = ["./scripts/resolve-dev-env"]
-timeout_seconds = %d
+# Credentials: a host program that prints KEY=value lines (.env style).
+# It runs in this directory without a terminal.
+#[environment]
+#resolver = ["cat", "./env.1p"]
+#timeout_seconds = %d
 
-# [[forwards]]
-# direction = "guest-to-host"
-# listen_port = 1080
-# target_host = "127.0.0.1"
-# target_port = 1080
+# Private keys copied to ~/.ssh in the guest (the .pub next to it too).
+#[[ssh_keys]]
+#source = "~/.ssh/id_ed25519"
+
+# Tunnels, loopback only. guest-to-host = ssh -R, host-to-guest = ssh -L.
+#[[forwards]]
+#direction = "guest-to-host"
+#listen_port = 1080
+#target_host = "127.0.0.1"
+#target_port = 1080
 `
 
 // initConfig writes a fresh .devvm.toml and refuses to overwrite one.
@@ -274,7 +279,7 @@ func initConfig(filename string, out io.Writer) error {
 	if !identifier.MatchString(name) {
 		name = "my-project"
 	}
-	text := fmt.Sprintf(configTemplate, jsonString(name), defaultInstance, jsonString(guestMountRoot+name), defaultTimeoutSecs)
+	text := fmt.Sprintf(configTemplate, jsonString(name), defaultInstance, jsonString(guestMountRoot+name), 180)
 	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err

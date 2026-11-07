@@ -21,6 +21,7 @@ type fakeMachine struct {
 	brokenLoader  bool
 	guestPortBusy bool
 	boot          string
+	keys          map[string]string // guest ~/.ssh contents
 }
 
 // activate computes one reconciliation and applies it, like the CLI does.
@@ -80,6 +81,19 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 		case strings.Contains(remote, "guest clear"):
 			f.project = ""
 			f.payload = ""
+			f.keys = nil
+			return Result{}, nil
+		case strings.Contains(remote, "guest ssh-clear"):
+			f.keys = map[string]string{}
+			return Result{}, nil
+		case strings.Contains(remote, "guest ssh-key "):
+			// remote is: /bin/bash ... -c '<helper> ssh-key '"'"'NAME'"'"''  — recover NAME.
+			rest := remote[strings.Index(remote, "ssh-key ")+len("ssh-key "):]
+			name := strings.Trim(strings.ReplaceAll(rest, `'"'"'`, ""), "'")
+			if f.keys == nil {
+				f.keys = map[string]string{}
+			}
+			f.keys[name] = c.Input
 			return Result{}, nil
 		case strings.Contains(remote, "guest motd"):
 			if strings.Contains(c.Input, "secret") {
@@ -306,5 +320,58 @@ func TestStoppedVMMountReplacementRequiresApproval(t *testing.T) {
 	}
 	if rec.Plan.Restart || !rec.Plan.Edit || !rec.Plan.ConfirmationRequired {
 		t.Fatalf("stopped VM mount replacement must still require confirmation: %+v", rec.Plan)
+	}
+}
+
+func TestSSHKeysProvisionedAndReplaced(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	keyDir := t.TempDir()
+	for name, body := range map[string]string{"id_a": "PRIVATE-A", "id_a.pub": "PUBLIC-A", "id_b": "PRIVATE-B"} {
+		if err := os.WriteFile(filepath.Join(keyDir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.SSHKeys = []SSHKey{{Source: filepath.Join(keyDir, "id_a")}, {Source: filepath.Join(keyDir, "id_b"), Name: "deploy"}}
+	if err := c.validateSSHKeys(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.keys["id_a"] != "PRIVATE-A" || f.keys["id_a.pub"] != "PUBLIC-A" || f.keys["deploy"] != "PRIVATE-B" || len(f.keys) != 3 {
+		t.Fatalf("keys not installed as configured: %v", f.keys)
+	}
+	// Dropping a key from the config removes it on the next provision.
+	c.SSHKeys = c.SSHKeys[:1]
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, still := f.keys["deploy"]; still || len(f.keys) != 2 {
+		t.Fatalf("removed key still present: %v", f.keys)
+	}
+	if _, err := a.Stop(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if f.keys != nil {
+		t.Fatal("keys survived deactivate")
+	}
+}
+
+func TestSSHKeyValidation(t *testing.T) {
+	c := testConfig(t, "p")
+	for _, bad := range []SSHKey{{Source: ""}, {Source: "/x", Name: "../etc"}, {Source: "/x", Name: "k.pub"}} {
+		c.SSHKeys = []SSHKey{bad}
+		if err := c.validateSSHKeys(); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+	c.SSHKeys = []SSHKey{{Source: "~/.ssh/id_x"}, {Source: "./k/id_x"}}
+	if err := c.validateSSHKeys(); err == nil {
+		t.Fatal("accepted duplicate target name")
+	}
+	c.SSHKeys = []SSHKey{{Source: "./k/id_x"}}
+	if err := c.validateSSHKeys(); err != nil || c.SSHKeys[0].Source != filepath.Join(c.Root, "k/id_x") || c.SSHKeys[0].Name != "id_x" {
+		t.Fatalf("relative source not resolved: %+v %v", c.SSHKeys[0], err)
 	}
 }

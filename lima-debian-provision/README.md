@@ -23,8 +23,10 @@ temporary inventory under `.runtime/`. Any extra arguments go to
 `ansible-playbook`, e.g. `--tags`, `--check --diff`, `-e`.
 
 Applying changes the guest. Besides packages it writes `~/.zshenv`,
-`~/.zshrc`, `~/.config/starship.toml`, `~/.config/mise/config.toml` and adds
-lines to `~/.bashrc`. Put personal zsh settings in `~/.zshrc.local`.
+`~/.zshrc`, `~/.config/mise/config.toml` and adds lines to `~/.bashrc`. Put
+personal zsh settings in `~/.zshrc.local`. Starship runs with its default
+prompt; a sample config is installed as `~/.config/starship.toml.example` —
+copy it to `~/.config/starship.toml` to use it.
 
 Settings, as environment variables or in a gitignored `provision.env`:
 

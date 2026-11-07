@@ -25,9 +25,9 @@ just deps
 
 The last command changes the VM: apt packages, Docker, mise with the toolchain
 from `group_vars/all/tool_versions.yml`, zsh with Starship, and the helpers the
-controller needs. It overwrites `~/.zshenv`, `~/.zshrc` and
-`~/.config/starship.toml` in the guest — keep personal zsh settings in
-`~/.zshrc.local`.
+controller needs. It overwrites `~/.zshenv` and `~/.zshrc` in the
+guest — keep personal zsh settings in `~/.zshrc.local`. A Starship config is
+offered as `~/.config/starship.toml.example`; copy it over if you want it.
 
 Already provisioned before the controller existed? Install just the helpers:
 
@@ -85,8 +85,10 @@ the value is everything after the first `=`, verbatim.
 A typical resolver reads a 1Password item or an encrypted file. Unlock it
 beforehand; the script cannot prompt.
 
-Leave `resolver` out if the project has no secrets. Port forwards are
-described in the [controller README](lima-debian-ctl/README.md#forwards).
+Leave `resolver` out if the project has no secrets. SSH keys the project
+needs in the guest go in `[[ssh_keys]]` entries (`source = "~/.ssh/id_ed25519"`);
+port forwards and the key options are described in the
+[controller README](lima-debian-ctl/README.md#forwards).
 
 Commit `.devvm.toml`. It contains no secrets.
 

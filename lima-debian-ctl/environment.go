@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -29,7 +30,8 @@ var reservedEnvNames = map[string]bool{
 
 // parseEnvironment reads literal KEY=value records separated by CR, LF or
 // CRLF. Blank lines, "#" comments and an "export " prefix are accepted so
-// ordinary .env files work; values are taken verbatim, quotes included.
+// ordinary .env files work, and a repeated name takes its last value.
+// Values are taken verbatim, quotes included.
 // Errors report line numbers only, never record contents.
 func parseEnvironment(text string) (map[string]string, error) {
 	if len(text) > environmentLimit || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
@@ -48,10 +50,7 @@ func parseEnvironment(text string) (map[string]string, error) {
 		case strings.HasPrefix(key, "LIMA_DEBIAN_CTL_") || reservedEnvNames[key]:
 			return nil, fmt.Errorf("reserved environment name on line %d", i+1)
 		}
-		if _, dup := env[key]; dup {
-			return nil, fmt.Errorf("duplicate environment name on line %d", i+1)
-		}
-		env[key] = val
+		env[key] = val // repeated names: last definition wins, as in .env files
 	}
 	return env, nil
 }
@@ -81,8 +80,9 @@ func renderEnvironment(env map[string]string, project string) string {
 // payload is what gets uploaded to the guest: the environment file and a
 // non-secret banner describing the session.
 type payload struct {
-	Environment string // shell exports; contains the secret values
-	MOTD        string // shown by `shell`; names only, never values
+	Environment string    // shell exports; contains the secret values
+	Keys        []keyFile // private keys for ~/.ssh
+	MOTD        string    // shown by `shell`; names only, never values
 }
 
 // resolveEnvironment runs the project's resolver on the host and renders its
@@ -100,37 +100,74 @@ func resolveEnvironment(ctx context.Context, r Runner, c Config) (payload, error
 			return payload{}, err
 		}
 	}
-	return payload{Environment: renderEnvironment(env, c.Project), MOTD: renderMOTD(c, env)}, nil
+	keys, err := loadSSHKeys(c.SSHKeys)
+	if err != nil {
+		return payload{}, err
+	}
+	return payload{Environment: renderEnvironment(env, c.Project), Keys: keys, MOTD: renderMOTD(c, env)}, nil
 }
 
-// renderMOTD builds the banner printed by `lima-debian-ctl shell`.
+// renderMOTD builds the banner printed by `lima-debian-ctl shell`: one item
+// per line under an aligned label column. Colors are ANSI, disabled when
+// NO_COLOR is set on the host at render time.
 func renderMOTD(c Config, env map[string]string) string {
 	keys := make([]string, 0, len(env))
 	for key := range env {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+
+	bold, cyan, dim, reset := "\x1b[1m", "\x1b[36m", "\x1b[2m", "\x1b[0m"
+	if _, noColor := os.LookupEnv("NO_COLOR"); noColor {
+		bold, cyan, dim, reset = "", "", "", ""
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Project  %s  (lima-debian-ctl, activated %s)\n", c.Project, time.Now().Format("2006-01-02 15:04"))
-	for _, m := range c.Mounts {
+	row := func(label string, values ...string) {
+		for i, v := range values {
+			if i == 0 {
+				fmt.Fprintf(&b, "%s%-9s%s %s\n", bold, label, reset, v)
+			} else {
+				fmt.Fprintf(&b, "%-9s %s\n", "", v)
+			}
+		}
+	}
+	b.WriteString("\n")
+	row("Project", cyan+c.Project+reset)
+	row("VM", c.Instance)
+	row("Activated", time.Now().Format("2006-01-02 15:04"))
+	mounts := make([]string, len(c.Mounts))
+	for i, m := range c.Mounts {
 		mode := "rw"
 		if !m.Writable {
 			mode = "ro"
 		}
-		fmt.Fprintf(&b, "Mount    %-28s <- %s (%s)\n", m.Guest, m.Host, mode)
+		mounts[i] = fmt.Sprintf("%s %s<- %s (%s)%s", m.Guest, dim, m.Host, mode, reset)
 	}
-	for _, f := range c.Forwards {
-		if f.Direction == GuestToHost {
-			fmt.Fprintf(&b, "Forward  guest:%d -> host %s:%d\n", f.ListenPort, f.TargetHost, f.TargetPort)
-		} else {
-			fmt.Fprintf(&b, "Forward  host:%d -> guest %s:%d\n", f.ListenPort, f.TargetHost, f.TargetPort)
+	row("Mount", mounts...)
+	if len(c.Forwards) > 0 {
+		fwd := make([]string, len(c.Forwards))
+		for i, f := range c.Forwards {
+			if f.Direction == GuestToHost {
+				fwd[i] = fmt.Sprintf("guest:%d -> host %s:%d", f.ListenPort, f.TargetHost, f.TargetPort)
+			} else {
+				fwd[i] = fmt.Sprintf("host:%d -> guest %s:%d", f.ListenPort, f.TargetHost, f.TargetPort)
+			}
 		}
+		row("Forward", fwd...)
 	}
 	if len(keys) > 0 {
-		fmt.Fprintf(&b, "Env      %s\n", strings.Join(keys, " "))
+		row("Env", keys...)
 	} else {
-		b.WriteString("Env      (none)\n")
+		row("Env", dim+"(none)"+reset)
 	}
-	b.WriteString("Refresh  lima-debian-ctl provision   Tools: run mise yourself\n")
+	if len(c.SSHKeys) > 0 {
+		names := make([]string, len(c.SSHKeys))
+		for i, k := range c.SSHKeys {
+			names[i] = "~/.ssh/" + k.Name
+		}
+		row("SSH key", names...)
+	}
+	row("Refresh", dim+"lima-debian-ctl provision"+reset)
+	b.WriteString("\n")
 	return b.String()
 }

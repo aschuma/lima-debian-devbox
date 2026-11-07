@@ -46,10 +46,24 @@ func (g guest) BootID(ctx context.Context) (string, error) {
 	return g.helper(ctx, "check", "")
 }
 
-// Provision installs the environment file and the banner atomically.
+// Provision installs the environment file, the SSH keys and the banner.
+// Keys from a previous provision that are no longer configured are removed.
 func (g guest) Provision(ctx context.Context, p payload) error {
 	if _, err := g.helper(ctx, "provision", p.Environment); err != nil {
 		return err
+	}
+	if _, err := g.helper(ctx, "ssh-clear", ""); err != nil {
+		return err
+	}
+	for _, k := range p.Keys {
+		if _, err := g.helper(ctx, "ssh-key "+shellQuote(k.Name), string(k.Private)); err != nil {
+			return err
+		}
+		if k.Public != nil {
+			if _, err := g.helper(ctx, "ssh-key "+shellQuote(k.Name+".pub"), string(k.Public)); err != nil {
+				return err
+			}
+		}
 	}
 	_, err := g.helper(ctx, "motd", p.MOTD)
 	return err

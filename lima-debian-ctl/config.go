@@ -68,6 +68,7 @@ type Config struct {
 	Mounts        []Mount     `toml:"mounts" json:"mounts"`
 	Environment   Environment `toml:"environment" json:"environment"`
 	Forwards      []Forward   `toml:"forwards" json:"forwards"`
+	SSHKeys       []SSHKey    `toml:"ssh_keys" json:"ssh_keys"`
 	Root          string      `toml:"-" json:"root"`
 	File          string      `toml:"-" json:"file"`
 }
@@ -145,6 +146,9 @@ func (c *Config) validate() error {
 		return err
 	}
 	if err := c.validateResolver(); err != nil {
+		return err
+	}
+	if err := c.validateSSHKeys(); err != nil {
 		return err
 	}
 	return c.validateForwards()

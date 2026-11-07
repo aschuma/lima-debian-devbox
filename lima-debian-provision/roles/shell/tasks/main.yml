@@ -48,10 +48,12 @@
     group: "{{ devbox_group }}"
     mode: '0755'
 
-- name: Install starship config
+# Shipped as an example only: starship runs with its defaults unless the user
+# copies this to ~/.config/starship.toml. An existing starship.toml is untouched.
+- name: Install starship example config
   ansible.builtin.copy:
-    src: starship.toml
-    dest: "{{ devbox_home }}/.config/starship.toml"
+    src: starship.toml.example
+    dest: "{{ devbox_home }}/.config/starship.toml.example"
     owner: "{{ devbox_user }}"
     group: "{{ devbox_group }}"
     mode: '0644'

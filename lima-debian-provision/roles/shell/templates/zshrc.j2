@@ -23,7 +23,7 @@ zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
 # --- mise: full activation (supersedes the shims from ~/.zshenv) -------------
 command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"
 
-# --- starship prompt (config: ~/.config/starship.toml) -----------------------
+# --- starship prompt (optional config: cp ~/.config/starship.toml.example ~/.config/starship.toml)
 command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
 
 # --- aliases -----------------------------------------------------------------

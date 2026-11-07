@@ -26,10 +26,14 @@ func TestEnvironmentAcceptsDotenvShape(t *testing.T) {
 	if env["A"] != "one" || env["B"] != "\"quoted stays\"" || len(env) != 2 {
 		t.Fatalf("unexpected parse: %v", env)
 	}
+	env, err = parseEnvironment("A=first\nA=last\n")
+	if err != nil || env["A"] != "last" {
+		t.Fatalf("unexpected parse: %v", env)
+	}
 }
 
 func TestEnvironmentRejectsInvalidWithoutLeakingValues(t *testing.T) {
-	for _, text := range []string{"A=secret\nA=secret", "BAD-NAME=secret", "missing-secret", "A=secret\x00", "HOME=secret", "BASH_ENV=secret", "LIMA_DEBIAN_CTL_PROJECT=secret", "A=secret\ncontinued-secret", string([]byte{0xff})} {
+	for _, text := range []string{"BAD-NAME=secret", "missing-secret", "A=secret\x00", "HOME=secret", "BASH_ENV=secret", "LIMA_DEBIAN_CTL_PROJECT=secret", "A=secret\ncontinued-secret", string([]byte{0xff})} {
 		_, err := parseEnvironment(text)
 		if err == nil {
 			t.Fatalf("accepted invalid record")
@@ -60,8 +64,10 @@ func TestRenderedExportsAreLiteralInBashAndZsh(t *testing.T) {
 }
 func TestMOTDNamesOnly(t *testing.T) {
 	c := Config{Project: "p", Mounts: []Mount{{Host: "/h", Guest: "/work/p", Writable: true}}, Forwards: []Forward{{Direction: GuestToHost, ListenPort: 1080, TargetHost: "127.0.0.1", TargetPort: 1080}}}
-	motd := renderMOTD(c, map[string]string{"TOKEN": "s3cret"})
-	for _, want := range []string{"Project  p", "/work/p", "guest:1080 -> host", "Env      TOKEN"} {
+	t.Setenv("NO_COLOR", "1")
+	c.Instance = "devbox"
+	motd := renderMOTD(c, map[string]string{"TOKEN": "s3cret", "A": "x"})
+	for _, want := range []string{"Project   p", "VM        devbox", "/work/p", "guest:1080 -> host", "Env       A\n          TOKEN"} {
 		if !strings.Contains(motd, want) {
 			t.Fatalf("motd missing %q:\n%s", want, motd)
 		}
