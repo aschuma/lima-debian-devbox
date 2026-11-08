@@ -1,0 +1,93 @@
+# Lima template for the shared Debian dev VM ("devbox").
+#
+# Use this to create a new VM. Provisioning is a separate step and is NOT
+# part of this template:
+#
+#   limactl create --name devbox ./devbox-lima-template.yml
+#   limactl start devbox
+#   ./lima-debian-provision/provision.sh --preflight
+#   ./lima-debian-provision/provision.sh
+#
+# The values mirror the running `devbox` instance. Settings that
+# `lima-debian-ctl activate` manages later (mounts, port forwarding policy,
+# ssh.forwardAgent, mountInotify, containerd) are set here to the state the
+# controller expects, so the first `activate` finds no surprises.
+#
+# Host: Apple silicon Mac, Lima 2.2.1. See docs/research/lima-native-features.md.
+
+---
+minimumLimaVersion: "2.0.0"
+
+# VZ is the macOS-native hypervisor and the only vmType with virtiofs mounts
+# and vzNAT. It cannot be changed after creation.
+vmType: "vz"
+arch: "aarch64"
+
+# Sizing of the current devbox. Adjust before creating; disk cannot shrink.
+cpus: 6
+memory: "16GiB"
+disk: "100GiB"
+
+# Debian 12 (bookworm) ARM64. Pinned release first, "latest" as fallback
+# because Debian removes dated releases after a few months.
+# The nocloud variant is what the current devbox runs on.
+images:
+  - location: "https://cloud.debian.org/images/cloud/bookworm/20260923-2610/debian-12-nocloud-arm64-20260923-2610.qcow2"
+    arch: "aarch64"
+    digest: "sha512:407f2dfc897aea98aa95b948d79f00ded4aa940c3f13a6f314eeaf10ac2cd3d0453943f836d8410c26c7e80c7c3cb823c89a877fdf1e18811db4e61feadeb729"
+    variant: "nocloud"
+  - location: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-nocloud-arm64.qcow2"
+    arch: "aarch64"
+    variant: "nocloud"
+
+# virtiofs (the VZ default). 9p is excluded explicitly so Lima never falls
+# back to it.
+mountType: "virtiofs"
+mountTypesUnsupported: [9p]
+
+# No mounts at creation. The host home is never mounted. lima-debian-ctl adds
+# exactly the active project's folders under /work/ on `activate`.
+mounts: []
+
+# Lima's automatic guest-port forwarding is off. Only the forwards declared in
+# a project's .devvm.toml are opened, by lima-debian-ctl over SSH. Lima's own
+# SSH port is not affected by this rule.
+portForwards:
+  - guestIP: "0.0.0.0"
+    guestIPMustBeZero: false
+    proto: "any"
+    ignore: true
+
+ssh:
+  # Agent forwarding is turned on by `lima-debian-ctl activate` (forward_agent
+  # defaults to true). It stays off in the template on purpose: Lima 2.2.1
+  # links the agent socket before /run/host-services exists, which marks a
+  # fresh start as degraded. Provisioning installs a tmpfiles.d workaround;
+  # after that the controller enables forwarding safely.
+  forwardAgent: false
+  # Host ~/.ssh/*.pub are not added to the guest. Lima's own key is enough.
+  loadDotSSHPubKeys: false
+
+# Host-to-guest inotify forwarding is experimental in Lima and opt-in per
+# project (mount_inotify in .devvm.toml). Off at creation.
+mountInotify: false
+
+# The guest runs Docker CE, installed by lima-debian-provision. Lima's own
+# containerd is unused; with containerd.user on, every fresh start downloads
+# the nerdctl bundle from GitHub and fails when that download does.
+containerd:
+  system: false
+  user: false
+
+# Guest user. Lima defaults name/uid to the host user and gives passwordless
+# sudo, which provisioning requires. Home is Lima's default
+# /home/<user>.guest; the host home is never mounted over it.
+user:
+  passwordlessSudo: true
+
+# Lima's built-in rosetta is not needed; the toolchain is native ARM64.
+vmOpts:
+  vz:
+    rosetta:
+      enabled: false
+      binfmt: false

@@ -149,9 +149,14 @@ features would be turned on *against*:
    `ssh-key`/`ssh-clear` subcommands); previously copied keys are to be
    removed from the guest by hand. The `status` command reports the agent
    state (`wanted`/`enabled`/`available`) and each forward's listener. [4][11]
-2. Pin durable, non-secret defaults (`mountType: virtiofs`, `ssh.forwardAgent`)
-   so they survive recreation — in the instance config and/or
-   `$LIMA_HOME/_config/default.yaml`. [8]
+2. **[implemented]** Pin durable, non-secret defaults so they survive
+   recreation: `devbox-lima-template.yml` in the repo root carries `vmType`,
+   sizing, the Debian 12 ARM64 image, `mountType: virtiofs`,
+   `mountTypesUnsupported: [9p]`, the ignore-all `portForwards` rule,
+   `containerd` off, `mountInotify: false` and `ssh.forwardAgent: false` (the
+   controller turns the latter on after provisioning installs the
+   `/run/host-services` workaround). It contains no provisioning; that stays
+   with `provision.sh`. Validated by `limactl validate` in `just lint`. [8]
 3. **[implemented]** `limactl protect`: `activate` protects the instance on
    first contact if it is not protected yet (idempotent; Lima only warns when
    already protected). `status` reports `protected`. Snapshots were dropped

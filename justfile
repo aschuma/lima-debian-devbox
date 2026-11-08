@@ -38,7 +38,8 @@ validate:
 # Shell, YAML, and Ansible lint (requires shellcheck and uv)
 lint:
     shellcheck "{{root}}/lima-debian-provision/provision.sh" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl-guest" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl.sh"
-    cd "{{root}}" && uvx --from yamllint yamllint .github .yamllint.yml
+    cd "{{root}}" && uvx --from yamllint yamllint .github .yamllint.yml devbox-lima-template.yml
+    cd "{{root}}" && limactl validate devbox-lima-template.yml
     cd "{{root}}/lima-debian-provision" && uvx --from yamllint yamllint .
     cd "{{root}}/lima-debian-provision" && uvx --from ansible-lint ansible-lint playbook.yml
 

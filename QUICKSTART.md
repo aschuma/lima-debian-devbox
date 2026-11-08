@@ -5,7 +5,16 @@ This guide takes you from an empty Lima VM to a working project shell.
 ## What you need
 
 - macOS with [Lima](https://lima-vm.io/) installed.
-- A running Debian 12 ARM64 Lima instance. This guide calls it `devbox`.
+- A Debian 12 ARM64 Lima instance. This guide calls it `devbox`. Create it
+  from the template in this repo:
+
+  ```bash
+  limactl create --name devbox ./devbox-lima-template.yml
+  limactl start devbox
+  ```
+
+  The template sets the VM type, size, image and the Lima settings the
+  controller expects. It does not provision anything; that is step 2.
 - A user inside the VM with passwordless sudo and `/usr/bin/python3`. Lima
   creates such a user by default. This guide calls it `aschuma`.
 

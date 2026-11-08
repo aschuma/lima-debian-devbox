@@ -16,10 +16,11 @@ and survive a project switch. What changes per project is small:
 The host home directory is never mounted. Only the active project's folders
 are visible inside the VM.
 
-## The two parts
+## The three parts
 
 | Directory | Purpose |
 | --- | --- |
+| [`devbox-lima-template.yml`](devbox-lima-template.yml) | Lima template. Creates the VM with the right type, size, image and Lima settings. Run once per VM. Contains no provisioning. |
 | [`lima-debian-provision/`](lima-debian-provision/README.md) | Ansible. Installs Docker, a mise toolchain, zsh with Starship and the guest helpers into an existing VM. Run it once, and again when tool versions change. |
 | [`lima-debian-ctl/`](lima-debian-ctl/README.md) | Go CLI. Switches the VM between projects: mounts, credentials, port forwards, shell. Run it every day. |
 
@@ -49,6 +50,8 @@ not touch it.
 Follow [QUICKSTART.md](QUICKSTART.md). In short:
 
 ```bash
+limactl create --name devbox ./devbox-lima-template.yml
+limactl start devbox
 ./lima-debian-provision/provision.sh --preflight
 ./lima-debian-provision/provision.sh          # changes the guest
 just install                                  # builds lima-debian-ctl

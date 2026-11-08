@@ -11,7 +11,8 @@ See the [top-level README](../README.md) for the overall picture.
 
 ## What it expects
 
-- A running Lima instance. Default name: `devbox`.
+- A running Lima instance. Default name: `devbox`. Create it from
+  [`devbox-lima-template.yml`](../devbox-lima-template.yml) in the repo root.
 - A user in the guest with passwordless sudo and `/usr/bin/python3`. Default
   name: `aschuma`. Lima creates such a user by default.
 
