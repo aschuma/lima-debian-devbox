@@ -4,6 +4,10 @@ A development VM for macOS, built on [Lima](https://lima-vm.io/). One Debian 12
 (ARM64) VM, called `devbox`, serves all your projects. You switch the VM from
 one project to the next instead of running one VM per project.
 
+## Disclaimer
+
+This project includes content generated with the assistance of artificial intelligence tools. Significant portions of the code, documentation, or other materials may have been created or refined using AI. While efforts have been made to review and validate all outputs, the accuracy and correctness of AI-generated content cannot be guaranteed. Users are encouraged to review and verify the code before use.
+
 ## Why one shared VM
 
 Tools, caches and Docker images live on the VM disk. They are installed once
