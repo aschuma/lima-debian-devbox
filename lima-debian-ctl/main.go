@@ -249,7 +249,8 @@ instance = %q
 #forward_agent = true
 
 # File watching: host edits on writable mounts raise inotify events in the
-# guest (Lima mountInotify), so IDE and build watchers react. Default true.
+# guest (Lima mountInotify), so IDE and build watchers react. Experimental in
+# Lima; off unless you set it.
 #mount_inotify = true
 
 [[mounts]]

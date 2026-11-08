@@ -151,11 +151,13 @@ features would be turned on *against*:
    from this item: unimplemented for VZ, see the finding above. `BackupConfig`
    remains. [10][12]
 4. **[implemented]** `mountInotify`: set from a new top-level `mount_inotify`
-   flag in `.devvm.toml` (default `true`), enforced through `limactl edit`
-   and part of the drift check, so flipping it plans an edit+restart. `status`
-   reports `mount_inotify` as `wanted`/`enabled`. Kept behind a flag because
-   Lima marks the feature experimental; IntelliJ behaviour is to be observed
-   in use. [8]
+   flag in `.devvm.toml` (default `false`, opt-in), enforced through
+   `limactl edit` and part of the drift check, so flipping it plans an
+   edit+restart. `status` reports `mount_inotify` as `wanted`/`enabled`.
+   Verified on `devbox`: a file written on the host produced an `IN_ATTRIB`
+   inotify event in the guest (Lima's guest agent re-stamps the mtime).
+   Default off because Lima marks the feature experimental; projects turn it
+   on when they want it. [8]
 
 ### Tier B — evaluate (real tradeoffs)
 5. Native `portForwards` with `static: true` for the `host-to-guest` subset only

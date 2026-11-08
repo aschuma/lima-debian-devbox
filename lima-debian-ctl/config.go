@@ -74,7 +74,8 @@ type Config struct {
 	ForwardAgent *bool `toml:"forward_agent" json:"forward_agent"`
 	// MountInotify enables Lima's mountInotify so host file changes on
 	// writable mounts raise inotify events in the guest (IDE/build watchers).
-	// nil means unset and defaults to true.
+	// nil means unset and defaults to false: Lima marks the feature
+	// experimental, so it is opt-in per project.
 	MountInotify *bool  `toml:"mount_inotify" json:"mount_inotify"`
 	Root         string `toml:"-" json:"root"`
 	File         string `toml:"-" json:"file"`
@@ -83,8 +84,8 @@ type Config struct {
 // forwardAgent returns the effective agent-forwarding setting (default on).
 func (c Config) forwardAgent() bool { return c.ForwardAgent == nil || *c.ForwardAgent }
 
-// mountInotify returns the effective inotify-forwarding setting (default on).
-func (c Config) mountInotify() bool { return c.MountInotify == nil || *c.MountInotify }
+// mountInotify returns the effective inotify-forwarding setting (default off).
+func (c Config) mountInotify() bool { return c.MountInotify != nil && *c.MountInotify }
 
 func (c Config) resolverTimeout() time.Duration {
 	return time.Duration(c.Environment.TimeoutSeconds) * time.Second
@@ -129,8 +130,8 @@ func loadConfig(filename string) (Config, error) {
 		c.ForwardAgent = &on
 	}
 	if c.MountInotify == nil {
-		on := true
-		c.MountInotify = &on
+		off := false
+		c.MountInotify = &off
 	}
 	return c, c.validate()
 }

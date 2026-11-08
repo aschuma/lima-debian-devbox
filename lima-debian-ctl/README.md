@@ -52,7 +52,7 @@ schema_version = 1
 project = "service-a"      # [A-Za-z0-9_-], used as the env marker
 instance = "devbox"        # Lima instance name
 forward_agent = true       # forward the host SSH agent; default true
-mount_inotify = true       # host edits raise inotify in the guest; default true
+mount_inotify = false      # host edits raise inotify in the guest; default false
 
 [[mounts]]                 # first mount = working directory for shell/exec
 host = "."                 # relative to this file; symlinks resolved
@@ -130,15 +130,15 @@ by hand; the old manifest is `~/.config/lima-debian-ctl/ssh-keys`.
 
 ### File watching
 
-With `mount_inotify = true` (the default), `activate` sets Lima's
+Off by default. With `mount_inotify = true`, `activate` sets Lima's
 `mountInotify` on the instance. Lima then forwards inotify events from the
 host to the guest for writable mounts. An IDE backend or build watcher in the
 VM sees a file you saved on the Mac without polling.
 
 The setting is part of the VM configuration. Changing it is drift, like a
-mount change, and `activate` restarts the VM to apply it. Lima marks the
-feature experimental. If file watching misbehaves, set `mount_inotify = false`
-and run `activate`.
+mount change, and `activate` restarts the VM to apply it. It is opt-in
+because Lima marks the feature experimental. Turn it on per project when you
+want it; set it back to `false` and run `activate` if it misbehaves.
 
 ### Protection
 

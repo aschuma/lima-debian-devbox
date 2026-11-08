@@ -99,9 +99,10 @@ the agent into the VM; no private key is copied. This is on by default. To
 turn it off for a project, add `forward_agent = false` at the top of
 `.devvm.toml`. Keep your agent unlocked on the host.
 
-**File watching.** Edits you save on the Mac raise inotify events inside the
-VM, so the IDE backend and build watchers notice them. This is on by default
-(`mount_inotify = true`). Set it to `false` if it misbehaves.
+**File watching.** Optionally, edits you save on the Mac can raise inotify
+events inside the VM, so the IDE backend and build watchers notice them. Add
+`mount_inotify = true` at the top of `.devvm.toml` to turn it on. It is off by
+default because Lima marks the feature experimental.
 
 Details: [SSH agent](lima-debian-ctl/README.md#ssh-agent),
 [port forwards](lima-debian-ctl/README.md#forwards).

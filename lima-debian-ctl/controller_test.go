@@ -379,24 +379,24 @@ func TestStatusReportsForwardsAndAgent(t *testing.T) {
 	}
 }
 
-func TestMountInotifyDefaultsOnAndIsDrift(t *testing.T) {
+func TestMountInotifyDefaultsOffAndIsDrift(t *testing.T) {
 	a, c, f := testController(t)
 	ctx := context.Background()
-	if !c.mountInotify() {
-		t.Fatal("mount_inotify must default to true when unset")
+	if c.mountInotify() {
+		t.Fatal("mount_inotify must default to false when unset")
 	}
 	if _, err := activate(t, a, ctx, c, true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.inst.Config.MountInotify {
-		t.Fatal("activate did not enable mountInotify on the instance")
+	if f.inst.Config.MountInotify {
+		t.Fatal("activate enabled mountInotify although it was not requested")
 	}
 	s, err := a.Status(ctx, c)
-	if err != nil || !s.MountInotify.Wanted || !s.MountInotify.Enabled {
-		t.Fatalf("status does not report inotify: %+v %v", s.MountInotify, err)
+	if err != nil || s.MountInotify.Wanted || s.MountInotify.Enabled {
+		t.Fatalf("status does not report inotify off: %+v %v", s.MountInotify, err)
 	}
-	off := false
-	c.MountInotify = &off
+	on := true
+	c.MountInotify = &on
 	rec, err := a.plan(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -407,8 +407,12 @@ func TestMountInotifyDefaultsOnAndIsDrift(t *testing.T) {
 	if _, err := activate(t, a, ctx, c, true); err != nil {
 		t.Fatal(err)
 	}
-	if f.inst.Config.MountInotify {
-		t.Fatal("mount_inotify=false not applied")
+	if !f.inst.Config.MountInotify {
+		t.Fatal("mount_inotify=true not applied")
+	}
+	s, err = a.Status(ctx, c)
+	if err != nil || !s.MountInotify.Wanted || !s.MountInotify.Enabled {
+		t.Fatalf("status does not report inotify on: %+v %v", s.MountInotify, err)
 	}
 }
 
