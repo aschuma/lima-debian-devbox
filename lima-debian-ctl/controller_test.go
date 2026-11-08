@@ -61,7 +61,12 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 			f.inst.Protected = true
 			return Result{}, nil
 		case "edit":
-			expression, inotify, ok := strings.Cut(c.Args[3], " | .mountInotify = ")
+			expression, ok := strings.CutSuffix(c.Args[3], " | .containerd.system = false | .containerd.user = false")
+			if !ok {
+				return Result{}, fmt.Errorf("edit expression does not disable Lima containerd")
+			}
+			f.inst.Config.Containerd = instanceContainerd{}
+			expression, inotify, ok := strings.Cut(expression, " | .mountInotify = ")
 			if !ok {
 				return Result{}, fmt.Errorf("edit expression lacks mountInotify")
 			}
@@ -159,7 +164,9 @@ func testController(t *testing.T) (Controller, Config, *fakeMachine) {
 	if err := os.WriteFile(filepath.Join(dir, "lima.yaml"), []byte("mounts: []\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	inst := Instance{Name: "devbox", Hostname: "lima-devbox", Status: "Running", Dir: dir, SSHConfigFile: filepath.Join(dir, "ssh.config")}
+	inst := Instance{Name: "devbox", Hostname: "lima-devbox", Status: "Running", Dir: dir, SSHConfigFile: filepath.Join(dir, "ssh.config"),
+		// Lima's builtin default: rootless containerd on.
+		Config: instanceConfig{Containerd: instanceContainerd{User: true}}}
 	fake := &fakeMachine{inst: inst, boot: "old-boot"}
 	store := Store{Dir: t.TempDir(), Socket: filepath.Join(t.TempDir(), "socket")}
 	return Controller{Runner: fake, Store: store}, c, fake
@@ -376,6 +383,33 @@ func TestStatusReportsForwardsAndAgent(t *testing.T) {
 	}
 	if !s.SSHAgent.Enabled || s.SSHAgent.Available || !strings.Contains(s.Hint, "agent socket missing") {
 		t.Fatalf("missing agent socket not reported: %+v", s)
+	}
+}
+
+func TestActivateDisablesLimaContainerd(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	if f.inst.Config.Containerd.disabled() {
+		t.Fatal("fake must start with Lima's default rootless containerd on")
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.inst.Config.Containerd.disabled() {
+		t.Fatalf("Lima containerd still enabled after activate: %+v", f.inst.Config.Containerd)
+	}
+	s, err := a.Status(ctx, c)
+	if err != nil || !s.LimaContainerdDisabled {
+		t.Fatalf("status does not report containerd disabled: %v %v", s.LimaContainerdDisabled, err)
+	}
+	// Something re-enables it behind our back: that is drift.
+	f.inst.Config.Containerd.User = true
+	rec, err := a.plan(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Plan.Edit || !rec.Plan.Restart {
+		t.Fatalf("re-enabled containerd must plan an edit+restart: %+v", rec.Plan)
 	}
 }
 

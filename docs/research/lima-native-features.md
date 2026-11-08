@@ -52,7 +52,7 @@ features would be turned on *against*:
 | `ssh.forwardAgent` | `false` → **set by `forward_agent`** | Keys were copied to guest before; agent forwarding replaces that [4] |
 | `ssh.loadDotSSHPubKeys` | `false` | Host `~/.ssh/*.pub` not auto-trusted |
 | `plain` | `false` | Convenience features (mounts, forwarding, agent) are available [5] |
-| `containerd.user` | `true` | Present but unused; the project uses Docker |
+| `containerd.user` | `true` (Lima default) → **forced off** | Unused (guest runs Docker CE); caused start to download nerdctl and fail on GitHub 503 |
 | `user.passwordlessSudo` | `true` | Preflight requirement already satisfied natively [6] |
 | `user.home` / `shell` | `/home/aschuma.guest` / `/bin/bash` | Guest helpers assume a POSIX login shell |
 
@@ -122,6 +122,13 @@ features would be turned on *against*:
   `errUnimplemented` for create/apply/delete/list), so it cannot serve as a
   rollback point for `devbox`. The controller's `lima.yaml` copy
   (`BackupConfig`) stays the configuration rollback. [10][12]
+- **`containerd.user` defaults to `true`** and makes every fresh `limactl
+  start` ensure the nerdctl bundle is present, downloading it from GitHub when
+  the cache is empty. Observed on `devbox`: a GitHub 503 aborted `limactl
+  start` with `FATA failed to download .../nerdctl-full-2.4.1-linux-arm64.tar.gz`
+  although the project never uses Lima's containerd (Docker CE is the engine).
+  Setting `containerd.user: false` and `containerd.system: false` removes the
+  download and the daemon. [4]
 - Named managed networks (`limactl network create`, `networks: [{lima: NAME}]`)
   and `vzNAT` give the guest a routable IP. These are out of scope for a
   loopback-only dev VM but are the escape hatch if IP-level guest access is ever
@@ -158,21 +165,25 @@ features would be turned on *against*:
    inotify event in the guest (Lima's guest agent re-stamps the mtime).
    Default off because Lima marks the feature experimental; projects turn it
    on when they want it. [8]
+5. **[implemented]** `containerd.user = false`, `containerd.system = false`:
+   enforced unconditionally in the controller's `limactl edit` expression and
+   drift check; `status` reports `lima_containerd_disabled`. Removes an
+   avoidable GitHub dependency from every start. [4]
 
 ### Tier B — evaluate (real tradeoffs)
-5. Native `portForwards` with `static: true` for the `host-to-guest` subset only
+6. Native `portForwards` with `static: true` for the `host-to-guest` subset only
    if restart-to-change-forwards is acceptable; otherwise keep the custom
    tunnels, which are justified by no-restart refresh. Splitting forwarding
    between native (forward) and custom (reverse) is the cost. [1][3]
-6. A `--preserve-env` env mode as an opt-in `.devvm.toml` switch: secrets never
+7. A `--preserve-env` env mode as an opt-in `.devvm.toml` switch: secrets never
    touch the guest disk for `shell`/`exec`, at the cost of not reaching
    externally launched IDE backends. [9]
 
 ### Tier C — note for later
 
-7. `guestSocket`/`hostSocket` reverse forwarding as the native implementation of
+8. `guestSocket`/`hostSocket` reverse forwarding as the native implementation of
    the deferred Docker-socket feature. [1]
-8. `vzNAT` / managed networks only if IP-level guest access is ever needed. [2]
+9. `vzNAT` / managed networks only if IP-level guest access is ever needed. [2]
 
 ### Stays custom (correctly)
 

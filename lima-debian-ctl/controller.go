@@ -304,7 +304,10 @@ type Status struct {
 	Forwards        []ForwardStatus `json:"forwards"`
 	SSHAgent        SSHAgentStatus  `json:"ssh_agent"`
 	MountInotify    SettingStatus   `json:"mount_inotify"`
-	Hint            string          `json:"hint,omitempty"`
+	// LimaContainerdDisabled is true when Lima's own containerd (system and
+	// rootless) is off, as the controller enforces; the guest uses Docker CE.
+	LimaContainerdDisabled bool   `json:"lima_containerd_disabled"`
+	Hint                   string `json:"hint,omitempty"`
 }
 
 // SettingStatus compares a .devvm.toml setting with what the instance has.
@@ -339,9 +342,10 @@ func (a Controller) Status(ctx context.Context, c Config) (Status, error) {
 		return Status{}, err
 	}
 	s := Status{Instance: c.Instance, VMStatus: inst.Status, Protected: inst.Protected, SelectedProject: c.Project, State: state,
-		Forwards:     make([]ForwardStatus, 0, len(c.Forwards)),
-		SSHAgent:     SSHAgentStatus{Wanted: c.forwardAgent(), Enabled: inst.Config.SSH.ForwardAgent},
-		MountInotify: SettingStatus{Wanted: c.mountInotify(), Enabled: inst.Config.MountInotify}}
+		Forwards:               make([]ForwardStatus, 0, len(c.Forwards)),
+		SSHAgent:               SSHAgentStatus{Wanted: c.forwardAgent(), Enabled: inst.Config.SSH.ForwardAgent},
+		MountInotify:           SettingStatus{Wanted: c.mountInotify(), Enabled: inst.Config.MountInotify},
+		LimaContainerdDisabled: inst.Config.Containerd.disabled()}
 	for _, f := range c.Forwards {
 		s.Forwards = append(s.Forwards, ForwardStatus{Forward: f})
 	}

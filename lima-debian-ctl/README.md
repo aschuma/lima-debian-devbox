@@ -31,7 +31,7 @@ lacks them.
 | `plan` | Show what `activate` would do. Reads only. Does not run the resolver. |
 | `activate` | Make this project the VM's active project. Asks before stopping the VM or replacing mounts. `--yes` skips the question. |
 | `provision` | Rerun the resolver and replace the env file. No restart. |
-| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, the SSH agent and inotify state, and whether the instance is protected. |
+| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, the SSH agent and inotify state, Lima containerd off, and whether the instance is protected. |
 | `shell` | Login shell in the project directory. Shows a banner first. |
 | `exec -- CMD...` | Run a command in the project directory. Exit code is passed through. |
 | `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
@@ -148,6 +148,15 @@ The shared VM carries every installed tool and Docker image. On the first
 has no snapshots for VZ instances; the controller's `lima.yaml` backup (see
 [State](#state)) is the rollback point for configuration.
 
+### Lima containerd
+
+The guest uses Docker CE, installed by `lima-debian-provision`. Lima's own
+containerd (`containerd.user`, on by default in Lima, and `containerd.system`)
+is switched off by `activate`. With it on, every fresh `limactl start`
+downloads the nerdctl bundle from GitHub and aborts if that fails. This is not
+configurable per project; `status` reports it as `lima_containerd_disabled`,
+and re-enabling it by hand counts as drift.
+
 ### Forwards
 
 `guest-to-host` is `ssh -R`: a port inside the VM reaches a service on the
@@ -169,8 +178,8 @@ here. Lima's SSH port is not affected.
    is not protected yet.
 4. Closes the previous project's tunnels. If a restart is needed: deletes the
    old env file, runs `limactl stop`, then `limactl edit --set` with the
-   mounts, the forwarding policy, `ssh.forwardAgent` and `mountInotify`, then
-   `limactl start`, and waits for SSH.
+   mounts, the forwarding policy, `ssh.forwardAgent`, `mountInotify` and
+   `containerd` off, then `limactl start`, and waits for SSH.
 5. Uploads the env file (`0600`, atomic rename) to
    `~/.config/lima-debian-ctl/environment.sh` in the guest. Uploads a banner
    with the project, mounts, forwards, variable *names* and the agent state.

@@ -116,11 +116,15 @@ This role is part of a full run. It can also be applied alone:
 
 ## Docker
 
-Lima's rootless containerd and nerdctl in `/usr/local/bin` stay as they are.
-The `docker` role adds Docker CE as a system daemon next to them. The two have
-separate images and containers. If Debian's `docker.io`, `containerd` or
-`runc` packages are present, the role stops with a message instead of removing
-them.
+Docker CE is the container engine in the guest. The `docker` role installs it
+as a system daemon. If Debian's `docker.io`, `containerd` or `runc` packages
+are present, the role stops with a message instead of removing them.
+
+Lima's own containerd (rootless `containerd.user` and `containerd.system`) is
+not used. `lima-debian-ctl activate` switches both off on the instance. With
+them on, every fresh `limactl start` downloads the nerdctl bundle from GitHub
+and aborts when that download fails. Files Lima installed earlier under
+`/usr/local/bin` (nerdctl, buildkit, …) are left alone but are not started.
 
 The user is added to the `docker` group, which is root-equivalent. Existing
 sessions need a new login, or `newgrp docker`.
