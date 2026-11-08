@@ -101,6 +101,13 @@ socket exists when the controller has enabled Lima's agent forwarding
 (`forward_agent` in `.devvm.toml`, default on). No private keys are installed
 in the guest.
 
+The role also installs `/etc/tmpfiles.d/lima-host-services.conf`. It works
+around a race in Lima 2.2.1: Lima links the agent socket right after sshd
+answers, but creates `/run/host-services` only later in its boot scripts.
+Without the workaround every start is reported as degraded, `limactl start`
+exits 1, and the socket is missing. See
+[docs/research/lima-native-features.md](../docs/research/lima-native-features.md).
+
 This role is part of a full run. It can also be applied alone:
 
 ```bash

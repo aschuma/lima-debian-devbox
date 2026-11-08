@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -284,13 +286,31 @@ func (a Controller) Stop(ctx context.Context, c Config) (State, error) {
 
 // Status is the non-secret health summary for the selected project.
 type Status struct {
-	Instance        string `json:"instance"`
-	VMStatus        string `json:"vm_status"`
-	SelectedProject string `json:"selected_project"`
-	State           State  `json:"state"`
-	Ready           bool   `json:"ready"`
-	TunnelsHealthy  bool   `json:"tunnels_healthy"`
-	Hint            string `json:"hint,omitempty"`
+	Instance        string          `json:"instance"`
+	VMStatus        string          `json:"vm_status"`
+	SelectedProject string          `json:"selected_project"`
+	State           State           `json:"state"`
+	Ready           bool            `json:"ready"`
+	TunnelsHealthy  bool            `json:"tunnels_healthy"`
+	Forwards        []ForwardStatus `json:"forwards"`
+	SSHAgent        SSHAgentStatus  `json:"ssh_agent"`
+	Hint            string          `json:"hint,omitempty"`
+}
+
+// ForwardStatus is one configured tunnel and whether its listener is bound.
+// For guest-to-host the listener is inside the VM (ssh -R), for host-to-guest
+// it is on the host (ssh -L).
+type ForwardStatus struct {
+	Forward
+	Listening bool `json:"listening"`
+}
+
+// SSHAgentStatus reports whether Lima's agent forwarding is configured on the
+// instance and whether the guest actually has the socket this boot.
+type SSHAgentStatus struct {
+	Wanted    bool `json:"wanted"`    // forward_agent in .devvm.toml
+	Enabled   bool `json:"enabled"`   // ssh.forwardAgent on the instance
+	Available bool `json:"available"` // /run/host-services/ssh-auth.sock exists in the guest
 }
 
 func (a Controller) Status(ctx context.Context, c Config) (Status, error) {
@@ -302,24 +322,61 @@ func (a Controller) Status(ctx context.Context, c Config) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Instance: c.Instance, VMStatus: inst.Status, SelectedProject: c.Project, State: state}
+	s := Status{Instance: c.Instance, VMStatus: inst.Status, SelectedProject: c.Project, State: state,
+		Forwards: make([]ForwardStatus, 0, len(c.Forwards)),
+		SSHAgent: SSHAgentStatus{Wanted: c.forwardAgent(), Enabled: inst.Config.SSH.ForwardAgent}}
+	for _, f := range c.Forwards {
+		s.Forwards = append(s.Forwards, ForwardStatus{Forward: f})
+	}
 	if inst.Status != statusRunning {
 		s.Hint = "VM is not running; run activate"
 		return s, nil
 	}
+	g := a.guest(inst)
 	_, activeErr := a.requireActive(ctx, c)
 	envErr := a.verifyEnvironment(ctx, inst, c)
-	s.TunnelsHealthy = len(c.Forwards) == 0 || a.tunnels(inst).Alive(ctx)
+	s.SSHAgent.Available = g.AgentSocketPresent(ctx)
+	alive := len(c.Forwards) == 0 || a.tunnels(inst).Alive(ctx)
+	s.TunnelsHealthy = alive
+	for i := range s.Forwards {
+		if !alive {
+			break
+		}
+		f := s.Forwards[i].Forward
+		if f.Direction == GuestToHost {
+			s.Forwards[i].Listening = g.Listening(ctx, f.ListenPort)
+		} else {
+			s.Forwards[i].Listening = hostListening(f.ListenPort)
+		}
+		s.TunnelsHealthy = s.TunnelsHealthy && s.Forwards[i].Listening
+	}
 	s.Ready = activeErr == nil && envErr == nil && s.TunnelsHealthy
 	switch {
 	case activeErr != nil:
 		s.Hint = activeErr.Error()
 	case envErr != nil:
 		s.Hint = envErr.Error() + "; run provision"
-	case !s.TunnelsHealthy:
+	case !alive:
 		s.Hint = "project tunnels are down; run activate"
+	case !s.TunnelsHealthy:
+		s.Hint = "a project forward is not listening; run activate"
+	case s.SSHAgent.Wanted && !s.SSHAgent.Enabled:
+		s.Hint = "ssh.forwardAgent is not set on the instance; run activate"
+	case s.SSHAgent.Wanted && !s.SSHAgent.Available:
+		s.Hint = "SSH agent socket missing in the guest (degraded Lima start?); restart with activate"
 	}
 	return s, nil
+}
+
+// hostListening reports whether something accepts connections on the host
+// loopback port, i.e. whether an ssh -L listener is bound.
+func hostListening(port int) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // Session opens the project shell or runs command in the guest and returns

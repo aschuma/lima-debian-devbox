@@ -97,9 +97,39 @@ func mountsEqual(a, b []Mount) bool {
 // limaClient wraps the limactl subcommands the controller needs.
 type limaClient struct{ r Runner }
 
+// run executes a limactl subcommand. Unlike the generic run helper it reports
+// limactl's stderr: limactl never sees credential values, and its messages
+// ("cannot edit a running instance", a degraded start, ...) are what the user
+// needs to act on.
 func (l limaClient) run(ctx context.Context, args ...string) error {
-	_, err := run(ctx, l.r, Command{Name: "limactl", Args: args})
-	return err
+	result, err := l.r.Run(ctx, Command{Name: "limactl", Args: args})
+	if err != nil {
+		return fmt.Errorf("limactl %s failed: %w", args[0], err)
+	}
+	if result.Code != 0 {
+		if msg := lastLimaMessage(result.Stderr); msg != "" {
+			return fmt.Errorf("limactl %s exited with status %d: %s", args[0], result.Code, msg)
+		}
+		return fmt.Errorf("limactl %s exited with status %d", args[0], result.Code)
+	}
+	return nil
+}
+
+// lastLimaMessage returns the final non-empty stderr line, which is where
+// limactl puts its fatal/error summary, stripped of its log prefix.
+func lastLimaMessage(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if _, msg, ok := strings.Cut(line, "msg="); ok {
+			return strings.Trim(msg, `"`)
+		}
+		return line
+	}
+	return ""
 }
 
 func (l limaClient) Stop(ctx context.Context, name string) error {

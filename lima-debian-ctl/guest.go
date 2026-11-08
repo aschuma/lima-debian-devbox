@@ -87,6 +87,17 @@ func (g guest) Listening(ctx context.Context, port int) bool {
 	return err == nil
 }
 
+// agentSocket is where Lima links the forwarded host SSH agent in the guest.
+const agentSocket = "/run/host-services/ssh-auth.sock"
+
+// AgentSocketPresent reports whether Lima's forwarded agent socket exists in
+// the guest for this boot. It can be missing even with ssh.forwardAgent set,
+// e.g. after a degraded Lima start.
+func (g guest) AgentSocketPresent(ctx context.Context) bool {
+	_, err := g.bash(ctx, "test -S "+agentSocket, "")
+	return err == nil
+}
+
 // Session attaches the terminal to the project shell or to command, run
 // through the helper so the project environment and workdir are verified
 // guest-side. The remote exit status is returned.

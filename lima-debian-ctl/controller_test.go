@@ -12,16 +12,17 @@ import (
 )
 
 type fakeMachine struct {
-	inst          Instance
-	calls         []Command
-	project       string
-	payload       string
-	failProvision bool
-	failResolver  bool
-	failHelper    bool
-	brokenLoader  bool
-	guestPortBusy bool
-	boot          string
+	inst               Instance
+	calls              []Command
+	project            string
+	payload            string
+	failProvision      bool
+	failResolver       bool
+	failHelper         bool
+	brokenLoader       bool
+	guestPortBusy      bool
+	agentSocketMissing bool
+	boot               string
 }
 
 // activate computes one reconciliation and applies it, like the CLI does.
@@ -79,6 +80,12 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 	}
 	if c.Name == "ssh" {
 		remote := c.Args[len(c.Args)-1]
+		// Tunnel master: start (-M) and control queries (-O check/exit) succeed.
+		for _, arg := range c.Args {
+			if arg == "-M" || arg == "-O" {
+				return Result{}, nil
+			}
+		}
 		switch {
 		case strings.Contains(remote, "guest check"):
 			if f.failHelper {
@@ -118,6 +125,11 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 				return Result{Code: 1}, nil
 			}
 			return Result{}, nil
+		case strings.Contains(remote, "test -S "+agentSocket):
+			if f.inst.Config.SSH.ForwardAgent && !f.agentSocketMissing {
+				return Result{}, nil
+			}
+			return Result{Code: 1}, nil
 		case strings.Contains(remote, "guest exec"):
 			return Result{Code: 17}, nil
 		case remote == "/bin/bash --noprofile --norc -c 'true'":
@@ -314,6 +326,46 @@ func TestStoppedVMMountReplacementRequiresApproval(t *testing.T) {
 	}
 	if rec.Plan.Restart || !rec.Plan.Edit || !rec.Plan.ConfirmationRequired {
 		t.Fatalf("stopped VM mount replacement must still require confirmation: %+v", rec.Plan)
+	}
+}
+
+func TestStatusReportsForwardsAndAgent(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	c.Forwards = []Forward{{Direction: "guest-to-host", ListenPort: 1080, TargetHost: "127.0.0.1", TargetPort: 1080}}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	s, err := a.Status(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.Ready || !s.TunnelsHealthy || len(s.Forwards) != 1 || !s.Forwards[0].Listening || s.Forwards[0].ListenPort != 1080 {
+		t.Fatalf("healthy status not reported: %+v", s)
+	}
+	if !s.SSHAgent.Wanted || !s.SSHAgent.Enabled || !s.SSHAgent.Available {
+		t.Fatalf("agent forwarding not reported as working: %+v", s.SSHAgent)
+	}
+
+	// The -R listener disappears inside the guest: master alive, forward dead.
+	f.guestPortBusy = true
+	s, err = a.Status(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Ready || s.TunnelsHealthy || s.Forwards[0].Listening || !strings.Contains(s.Hint, "not listening") {
+		t.Fatalf("dead forward not reported: %+v", s)
+	}
+	f.guestPortBusy = false
+
+	// Degraded Lima start: forwardAgent is set but the guest has no socket.
+	f.agentSocketMissing = true
+	s, err = a.Status(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.SSHAgent.Enabled || s.SSHAgent.Available || !strings.Contains(s.Hint, "agent socket missing") {
+		t.Fatalf("missing agent socket not reported: %+v", s)
 	}
 }
 

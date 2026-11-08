@@ -81,6 +81,16 @@ features would be turned on *against*:
   dynamic port forwarding. `devbox` is not plain, so agent forwarding is
   available; but a template must not set `plain: true` if these features are
   wanted. [5]
+- **Lima 2.2.1 race (observed on `devbox`).** The hostagent runs
+  `ln -sf $SSH_AUTH_SOCK /run/host-services/ssh-auth.sock` once, immediately
+  after sshd answers (`pkg/hostagent/hostagent.go`). The directory is created
+  by Lima's own boot script `boot.Linux/26-host-services.sh`, which runs later
+  with the cloud-init boot scripts. `/run` is tmpfs, so the directory is gone
+  on every boot and the link fails every time. Lima then reports the instance
+  as `degraded`, `limactl start` exits 1, and no agent socket exists in the
+  guest. Workaround applied by the `project_session` role: a
+  `systemd-tmpfiles` entry pre-creates `/run/host-services` (0700, guest user)
+  before sshd starts. Verified: start is `READY` with the link present. [11]
 - Passwordless sudo (`user.passwordlessSudo: true`) is the built-in default for
   cloud-init guests (QEMU/VZ) since Lima 2.2, and `devbox` already has it. The
   provisioning preflight requires passwordless sudo; a template-created VM
@@ -127,7 +137,8 @@ features would be turned on *against*:
    exists. The former `[[ssh_keys]]` feature, which copied private keys onto
    the guest disk, was removed entirely (config, `sshkeys.go`, guest
    `ssh-key`/`ssh-clear` subcommands); previously copied keys are to be
-   removed from the guest by hand. [4]
+   removed from the guest by hand. The `status` command reports the agent
+   state (`wanted`/`enabled`/`available`) and each forward's listener. [4][11]
 2. Pin durable, non-secret defaults (`mountType: virtiofs`, `ssh.forwardAgent`)
    so they survive recreation — in the instance config and/or
    `$LIMA_HOME/_config/default.yaml`. [8]
@@ -172,3 +183,4 @@ features would be turned on *against*:
 8. Lima docs, Filesystem mounts: https://lima-vm.io/docs/config/mount/
 9. Lima docs, Environment Variables: https://lima-vm.io/docs/config/environment-variables/
 10. Lima command reference (`snapshot`, `protect`, `tunnel`): https://lima-vm.io/docs/ (Command Reference)
+11. Lima v2.2.1 source, agent link and directory creation: https://github.com/lima-vm/lima/blob/v2.2.1/pkg/hostagent/hostagent.go and https://github.com/lima-vm/lima/blob/v2.2.1/pkg/cidata/cidata.TEMPLATE.d/boot.Linux/26-host-services.sh

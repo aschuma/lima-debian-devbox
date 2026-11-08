@@ -52,6 +52,28 @@
     group: root
     mode: '0644'
 
+# Lima 2.2.1 links the forwarded SSH agent to /run/host-services/ssh-auth.sock
+# right after sshd answers, but creates the directory only later in its
+# cloud-init boot scripts. /run is tmpfs, so the race recurs on every boot and
+# leaves the instance "degraded" (limactl start exits 1, no agent socket).
+# systemd-tmpfiles runs before sshd and pre-creates the directory with the
+# ownership Lima expects, so the link always succeeds.
+- name: Pre-create /run/host-services for Lima SSH agent forwarding
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/lima-host-services.conf
+    content: |
+      # Managed by lima-debian-provision (project_session). See the role for why.
+      d /run/host-services 0700 {{ devbox_user }} root -
+    owner: root
+    group: root
+    mode: '0644'
+  register: project_session_tmpfiles
+
+- name: Apply the tmpfiles entry now so the current boot has the directory
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/lima-host-services.conf
+  when: project_session_tmpfiles.changed
+  changed_when: true
+
 - name: Enable project credential startup and shutdown cleanup
   ansible.builtin.systemd_service:
     name: lima-debian-ctl-session.service

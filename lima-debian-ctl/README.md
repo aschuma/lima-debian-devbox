@@ -31,7 +31,7 @@ lacks them.
 | `plan` | Show what `activate` would do. Reads only. Does not run the resolver. |
 | `activate` | Make this project the VM's active project. Asks before stopping the VM or replacing mounts. `--yes` skips the question. |
 | `provision` | Rerun the resolver and replace the env file. No restart. |
-| `status` | Ready or not, and why. |
+| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, and the SSH agent state. |
 | `shell` | Login shell in the project directory. Shows a banner first. |
 | `exec -- CMD...` | Run a command in the project directory. Exit code is passed through. |
 | `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
