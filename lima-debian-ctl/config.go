@@ -71,13 +71,20 @@ type Config struct {
 	// ForwardAgent enables Lima's ssh.forwardAgent so guest git/ssh use the
 	// host agent through /run/host-services/ssh-auth.sock; no private key is
 	// ever written to the guest. nil means unset and defaults to true.
-	ForwardAgent *bool  `toml:"forward_agent" json:"forward_agent"`
+	ForwardAgent *bool `toml:"forward_agent" json:"forward_agent"`
+	// MountInotify enables Lima's mountInotify so host file changes on
+	// writable mounts raise inotify events in the guest (IDE/build watchers).
+	// nil means unset and defaults to true.
+	MountInotify *bool  `toml:"mount_inotify" json:"mount_inotify"`
 	Root         string `toml:"-" json:"root"`
 	File         string `toml:"-" json:"file"`
 }
 
 // forwardAgent returns the effective agent-forwarding setting (default on).
 func (c Config) forwardAgent() bool { return c.ForwardAgent == nil || *c.ForwardAgent }
+
+// mountInotify returns the effective inotify-forwarding setting (default on).
+func (c Config) mountInotify() bool { return c.MountInotify == nil || *c.MountInotify }
 
 func (c Config) resolverTimeout() time.Duration {
 	return time.Duration(c.Environment.TimeoutSeconds) * time.Second
@@ -120,6 +127,10 @@ func loadConfig(filename string) (Config, error) {
 	if c.ForwardAgent == nil {
 		on := true
 		c.ForwardAgent = &on
+	}
+	if c.MountInotify == nil {
+		on := true
+		c.MountInotify = &on
 	}
 	return c, c.validate()
 }

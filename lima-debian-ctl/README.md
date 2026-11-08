@@ -31,7 +31,7 @@ lacks them.
 | `plan` | Show what `activate` would do. Reads only. Does not run the resolver. |
 | `activate` | Make this project the VM's active project. Asks before stopping the VM or replacing mounts. `--yes` skips the question. |
 | `provision` | Rerun the resolver and replace the env file. No restart. |
-| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, and the SSH agent state. |
+| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, the SSH agent and inotify state, and whether the instance is protected. |
 | `shell` | Login shell in the project directory. Shows a banner first. |
 | `exec -- CMD...` | Run a command in the project directory. Exit code is passed through. |
 | `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
@@ -52,6 +52,7 @@ schema_version = 1
 project = "service-a"      # [A-Za-z0-9_-], used as the env marker
 instance = "devbox"        # Lima instance name
 forward_agent = true       # forward the host SSH agent; default true
+mount_inotify = true       # host edits raise inotify in the guest; default true
 
 [[mounts]]                 # first mount = working directory for shell/exec
 host = "."                 # relative to this file; symlinks resolved
@@ -127,6 +128,26 @@ guest. It is gone and is rejected as an unknown key. Keys installed by an older
 version are not removed automatically. Delete them from the guest's `~/.ssh`
 by hand; the old manifest is `~/.config/lima-debian-ctl/ssh-keys`.
 
+### File watching
+
+With `mount_inotify = true` (the default), `activate` sets Lima's
+`mountInotify` on the instance. Lima then forwards inotify events from the
+host to the guest for writable mounts. An IDE backend or build watcher in the
+VM sees a file you saved on the Mac without polling.
+
+The setting is part of the VM configuration. Changing it is drift, like a
+mount change, and `activate` restarts the VM to apply it. Lima marks the
+feature experimental. If file watching misbehaves, set `mount_inotify = false`
+and run `activate`.
+
+### Protection
+
+The shared VM carries every installed tool and Docker image. On the first
+`activate` the controller runs `limactl protect` on the instance, so
+`limactl delete` refuses it until you run `limactl unprotect` yourself. Lima
+has no snapshots for VZ instances; the controller's `lima.yaml` backup (see
+[State](#state)) is the rollback point for configuration.
+
 ### Forwards
 
 `guest-to-host` is `ssh -R`: a port inside the VM reaches a service on the
@@ -144,11 +165,12 @@ here. Lima's SSH port is not affected.
    restart is needed. If the VM is running, checks that the guest helpers are
    installed.
 2. Runs the resolver on the host. A failure here changes nothing.
-3. Backs up `lima.yaml` to the state directory.
+3. Backs up `lima.yaml` to the state directory. Protects the instance if it
+   is not protected yet.
 4. Closes the previous project's tunnels. If a restart is needed: deletes the
    old env file, runs `limactl stop`, then `limactl edit --set` with the
-   mounts, the forwarding policy and `ssh.forwardAgent`, then `limactl start`,
-   and waits for SSH.
+   mounts, the forwarding policy, `ssh.forwardAgent` and `mountInotify`, then
+   `limactl start`, and waits for SSH.
 5. Uploads the env file (`0600`, atomic rename) to
    `~/.config/lima-debian-ctl/environment.sh` in the guest. Uploads a banner
    with the project, mounts, forwards, variable *names* and the agent state.
@@ -160,8 +182,9 @@ here. Lima's SSH port is not affected.
 8. Writes `phase: ready` with the guest boot ID.
 
 Same project and the VM already matches: step 4 only closes tunnels. No
-restart. Different project, changed mounts or changed `forward_agent`: always
-a restart, so no process from the previous project survives.
+restart. Different project, changed mounts, changed `forward_agent` or changed
+`mount_inotify`: always a restart, so no process from the previous project
+survives.
 
 On any failure the phase is `incomplete`. Tunnels are closed and a freshly
 uploaded env file is removed. The previous project's credentials are not

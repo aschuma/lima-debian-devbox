@@ -28,6 +28,7 @@ type Instance struct {
 	Status        string         `json:"status"`
 	Dir           string         `json:"dir"`
 	SSHConfigFile string         `json:"sshConfigFile"`
+	Protected     bool           `json:"protected"`
 	Config        instanceConfig `json:"config"`
 }
 
@@ -35,6 +36,7 @@ type instanceConfig struct {
 	Mounts       []Mount       `json:"mounts"`
 	PortForwards []portForward `json:"portForwards"`
 	SSH          instanceSSH   `json:"ssh"`
+	MountInotify bool          `json:"mountInotify"`
 }
 
 type instanceSSH struct {
@@ -75,11 +77,12 @@ func (p portForward) isIgnoreAll() bool {
 
 // matchesProject reports whether the instance already carries exactly the
 // project's mounts, the managed forwarding policy and its agent-forwarding
-// setting.
+// and inotify settings.
 func (i Instance) matchesProject(c Config) bool {
 	return mountsEqual(i.Config.Mounts, c.Mounts) &&
 		len(i.Config.PortForwards) == 1 && i.Config.PortForwards[0].isIgnoreAll() &&
-		i.Config.SSH.ForwardAgent == c.forwardAgent()
+		i.Config.SSH.ForwardAgent == c.forwardAgent() &&
+		i.Config.MountInotify == c.mountInotify()
 }
 
 func mountsEqual(a, b []Mount) bool {
@@ -141,13 +144,21 @@ func (l limaClient) Start(ctx context.Context, name string) error {
 }
 
 // Edit replaces the instance's mounts and forwarding policy and sets SSH
-// agent forwarding from the project config. Lima refuses to edit a running
-// instance, so callers stop it first.
+// agent forwarding and inotify forwarding from the project config. Lima
+// refuses to edit a running instance, so callers stop it first.
 func (l limaClient) Edit(ctx context.Context, c Config) error {
 	expr := ".mounts = " + jsonString(c.Mounts) +
 		" | .portForwards = " + jsonString(ignoreAllForwards()) +
-		" | .ssh.forwardAgent = " + strconv.FormatBool(c.forwardAgent())
+		" | .ssh.forwardAgent = " + strconv.FormatBool(c.forwardAgent()) +
+		" | .mountInotify = " + strconv.FormatBool(c.mountInotify())
 	return l.run(ctx, "edit", "--tty=false", "--set", expr, c.Instance)
+}
+
+// Protect marks the instance so `limactl delete` refuses it. Losing the
+// shared VM means losing every installed tool and Docker image. Lima only
+// warns when it is already protected, so this is safe to repeat.
+func (l limaClient) Protect(ctx context.Context, name string) error {
+	return l.run(ctx, "protect", name)
 }
 
 // Discover returns the named instance from `limactl list --json`.

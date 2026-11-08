@@ -48,7 +48,7 @@ features would be turned on *against*:
 | `vmType` | `vz` | Immutable after creation; virtiofs mounts, vzNAT available [7][8] |
 | `arch` | `aarch64` | Matches the Debian 12 ARM64 target |
 | `mountTypesUnsupported` | `["9p"]` | 9p excluded; virtiofs is the effective mount type [8] |
-| `mountInotify` | `false` | IDE/build file-watching on host edits is **off** [8] |
+| `mountInotify` | `false` → **set by `mount_inotify`** | IDE/build file-watching on host edits [8] |
 | `ssh.forwardAgent` | `false` → **set by `forward_agent`** | Keys were copied to guest before; agent forwarding replaces that [4] |
 | `ssh.loadDotSSHPubKeys` | `false` | Host `~/.ssh/*.pub` not auto-trusted |
 | `plain` | `false` | Convenience features (mounts, forwarding, agent) are available [5] |
@@ -116,9 +116,12 @@ features would be turned on *against*:
   disk. It only affects that `shell`/`exec` invocation, so it does not reach an
   IDE backend or build daemon launched outside the controller — the same
   limitation the controller already documents for its env file. [9]
-- `limactl snapshot` and `limactl protect`/`unprotect` exist as subcommands,
-  giving a real rollback point and accidental-deletion guard around edits, where
-  the controller currently only copies `lima.yaml` (`BackupConfig`). [10]
+- `limactl protect`/`unprotect` guard an instance against `limactl delete`.
+  `limactl snapshot` exists as a subcommand but is **unimplemented for the VZ
+  driver** in 2.2.1 (`pkg/driver/vz/vz_driver_darwin.go` returns
+  `errUnimplemented` for create/apply/delete/list), so it cannot serve as a
+  rollback point for `devbox`. The controller's `lima.yaml` copy
+  (`BackupConfig`) stays the configuration rollback. [10][12]
 - Named managed networks (`limactl network create`, `networks: [{lima: NAME}]`)
   and `vzNAT` give the guest a routable IP. These are out of scope for a
   loopback-only dev VM but are the escape hatch if IP-level guest access is ever
@@ -142,13 +145,19 @@ features would be turned on *against*:
 2. Pin durable, non-secret defaults (`mountType: virtiofs`, `ssh.forwardAgent`)
    so they survive recreation — in the instance config and/or
    `$LIMA_HOME/_config/default.yaml`. [8]
-3. Use `limactl snapshot` / `limactl protect` around the stop/edit/start cycle,
-   augmenting or replacing `BackupConfig`. [10]
+3. **[implemented]** `limactl protect`: `activate` protects the instance on
+   first contact if it is not protected yet (idempotent; Lima only warns when
+   already protected). `status` reports `protected`. Snapshots were dropped
+   from this item: unimplemented for VZ, see the finding above. `BackupConfig`
+   remains. [10][12]
+4. **[implemented]** `mountInotify`: set from a new top-level `mount_inotify`
+   flag in `.devvm.toml` (default `true`), enforced through `limactl edit`
+   and part of the drift check, so flipping it plans an edit+restart. `status`
+   reports `mount_inotify` as `wanted`/`enabled`. Kept behind a flag because
+   Lima marks the feature experimental; IntelliJ behaviour is to be observed
+   in use. [8]
 
 ### Tier B — evaluate (real tradeoffs)
-
-4. `mountInotify: true` on the writable source mount for IDE/build file
-   watching, gated on testing because it is experimental. [8]
 5. Native `portForwards` with `static: true` for the `host-to-guest` subset only
    if restart-to-change-forwards is acceptable; otherwise keep the custom
    tunnels, which are justified by no-restart refresh. Splitting forwarding
@@ -184,3 +193,4 @@ features would be turned on *against*:
 9. Lima docs, Environment Variables: https://lima-vm.io/docs/config/environment-variables/
 10. Lima command reference (`snapshot`, `protect`, `tunnel`): https://lima-vm.io/docs/ (Command Reference)
 11. Lima v2.2.1 source, agent link and directory creation: https://github.com/lima-vm/lima/blob/v2.2.1/pkg/hostagent/hostagent.go and https://github.com/lima-vm/lima/blob/v2.2.1/pkg/cidata/cidata.TEMPLATE.d/boot.Linux/26-host-services.sh
+12. Lima v2.2.1 source, VZ driver snapshot stubs: https://github.com/lima-vm/lima/blob/v2.2.1/pkg/driver/vz/vz_driver_darwin.go

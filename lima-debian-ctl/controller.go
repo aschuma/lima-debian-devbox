@@ -101,6 +101,14 @@ func (a Controller) Activate(ctx context.Context, c Config, rec Reconciliation, 
 			return state, err
 		}
 	}
+	// The shared VM carries every installed tool and image; guard it against
+	// an accidental `limactl delete` before touching it.
+	if !inst.Protected {
+		if err := a.lima().Protect(ctx, c.Instance); err != nil {
+			return state, err
+		}
+		inst.Protected = true
+	}
 	state = State{Project: c.Project, Root: c.Root, ConfigHash: configHash(c), Phase: PhaseActivating}
 	if err := a.Store.save(state); err != nil {
 		return state, err
@@ -288,13 +296,21 @@ func (a Controller) Stop(ctx context.Context, c Config) (State, error) {
 type Status struct {
 	Instance        string          `json:"instance"`
 	VMStatus        string          `json:"vm_status"`
+	Protected       bool            `json:"protected"`
 	SelectedProject string          `json:"selected_project"`
 	State           State           `json:"state"`
 	Ready           bool            `json:"ready"`
 	TunnelsHealthy  bool            `json:"tunnels_healthy"`
 	Forwards        []ForwardStatus `json:"forwards"`
 	SSHAgent        SSHAgentStatus  `json:"ssh_agent"`
+	MountInotify    SettingStatus   `json:"mount_inotify"`
 	Hint            string          `json:"hint,omitempty"`
+}
+
+// SettingStatus compares a .devvm.toml setting with what the instance has.
+type SettingStatus struct {
+	Wanted  bool `json:"wanted"`
+	Enabled bool `json:"enabled"`
 }
 
 // ForwardStatus is one configured tunnel and whether its listener is bound.
@@ -322,9 +338,10 @@ func (a Controller) Status(ctx context.Context, c Config) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Instance: c.Instance, VMStatus: inst.Status, SelectedProject: c.Project, State: state,
-		Forwards: make([]ForwardStatus, 0, len(c.Forwards)),
-		SSHAgent: SSHAgentStatus{Wanted: c.forwardAgent(), Enabled: inst.Config.SSH.ForwardAgent}}
+	s := Status{Instance: c.Instance, VMStatus: inst.Status, Protected: inst.Protected, SelectedProject: c.Project, State: state,
+		Forwards:     make([]ForwardStatus, 0, len(c.Forwards)),
+		SSHAgent:     SSHAgentStatus{Wanted: c.forwardAgent(), Enabled: inst.Config.SSH.ForwardAgent},
+		MountInotify: SettingStatus{Wanted: c.mountInotify(), Enabled: inst.Config.MountInotify}}
 	for _, f := range c.Forwards {
 		s.Forwards = append(s.Forwards, ForwardStatus{Forward: f})
 	}

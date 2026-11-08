@@ -57,8 +57,18 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 			f.project = ""
 			f.boot = "new-boot"
 			return Result{}, nil
+		case "protect":
+			f.inst.Protected = true
+			return Result{}, nil
 		case "edit":
-			expression, agent, ok := strings.Cut(c.Args[3], " | .ssh.forwardAgent = ")
+			expression, inotify, ok := strings.Cut(c.Args[3], " | .mountInotify = ")
+			if !ok {
+				return Result{}, fmt.Errorf("edit expression lacks mountInotify")
+			}
+			if f.inst.Config.MountInotify, err = strconv.ParseBool(inotify); err != nil {
+				return Result{}, err
+			}
+			expression, agent, ok := strings.Cut(expression, " | .ssh.forwardAgent = ")
 			if !ok {
 				return Result{}, fmt.Errorf("edit expression lacks ssh.forwardAgent")
 			}
@@ -366,6 +376,64 @@ func TestStatusReportsForwardsAndAgent(t *testing.T) {
 	}
 	if !s.SSHAgent.Enabled || s.SSHAgent.Available || !strings.Contains(s.Hint, "agent socket missing") {
 		t.Fatalf("missing agent socket not reported: %+v", s)
+	}
+}
+
+func TestMountInotifyDefaultsOnAndIsDrift(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	if !c.mountInotify() {
+		t.Fatal("mount_inotify must default to true when unset")
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.inst.Config.MountInotify {
+		t.Fatal("activate did not enable mountInotify on the instance")
+	}
+	s, err := a.Status(ctx, c)
+	if err != nil || !s.MountInotify.Wanted || !s.MountInotify.Enabled {
+		t.Fatalf("status does not report inotify: %+v %v", s.MountInotify, err)
+	}
+	off := false
+	c.MountInotify = &off
+	rec, err := a.plan(ctx, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Plan.Edit || !rec.Plan.Restart {
+		t.Fatalf("changing mount_inotify must plan an edit+restart: %+v", rec.Plan)
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.inst.Config.MountInotify {
+		t.Fatal("mount_inotify=false not applied")
+	}
+}
+
+func TestActivateProtectsInstanceOnce(t *testing.T) {
+	a, c, f := testController(t)
+	ctx := context.Background()
+	if f.inst.Protected {
+		t.Fatal("fake starts protected")
+	}
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.inst.Protected || countCalls(f, "limactl", "protect") != 1 {
+		t.Fatalf("instance not protected exactly once: protected=%v calls=%d", f.inst.Protected, countCalls(f, "limactl", "protect"))
+	}
+	// Already protected: no second call.
+	if _, err := activate(t, a, ctx, c, true); err != nil {
+		t.Fatal(err)
+	}
+	if countCalls(f, "limactl", "protect") != 1 {
+		t.Fatal("protect repeated for an already protected instance")
+	}
+	s, err := a.Status(ctx, c)
+	if err != nil || !s.Protected {
+		t.Fatalf("status does not report protection: %v %v", s.Protected, err)
 	}
 }
 
