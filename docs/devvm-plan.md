@@ -1,7 +1,9 @@
 # Plan: project-scoped development on one reusable Lima VM
 
-Status: implemented in `lima-debian-ctl/` and verified on the real `devbox`
-VM. IntelliJ Remote Development has not been exercised. The controller README
+Historical baseline: the TOML/SSH implementation was verified on the real
+`devbox` VM. The controller now uses YAML and selectable native forwarding;
+see [the current design](research/lima-yaml-project-config.md). The new native
+forwarding variants have not been smoke-tested on a real VM. IntelliJ Remote Development has not been exercised. The controller README
 documents the commands as built; this file records the requirements and the
 reasoning behind the design.
 

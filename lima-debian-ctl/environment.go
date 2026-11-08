@@ -139,6 +139,16 @@ func renderMOTD(c Config, env map[string]string) string {
 		mounts[i] = fmt.Sprintf("%s %s<- %s (%s)%s", m.Guest, dim, m.Host, mode, reset)
 	}
 	row("Mount", mounts...)
+	if c.Backend != "" {
+		row("Ports", string(c.Backend))
+	}
+	for _, p := range c.NativeForwards {
+		mode := "dynamic"
+		if p.Static {
+			mode = "static"
+		}
+		row("Forward", fmt.Sprintf("native %s %s host %s:%d..%d -> guest %s:%d..%d", p.Proto, mode, p.HostIP, p.HostPortRange[0], p.HostPortRange[1], p.GuestIP, p.GuestPortRange[0], p.GuestPortRange[1]))
+	}
 	if len(c.Forwards) > 0 {
 		fwd := make([]string, len(c.Forwards))
 		for i, f := range c.Forwards {
@@ -158,7 +168,7 @@ func renderMOTD(c Config, env map[string]string) string {
 	if c.forwardAgent() {
 		row("SSH agent", "forwarded from host "+dim+"(/run/host-services/ssh-auth.sock)"+reset)
 	} else {
-		row("SSH agent", dim+"off (forward_agent = false)"+reset)
+		row("SSH agent", dim+"off (lima.ssh.forwardAgent = false)"+reset)
 	}
 	row("Refresh", dim+"lima-debian-ctl provision"+reset)
 	b.WriteString("\n")

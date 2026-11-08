@@ -27,7 +27,8 @@ type Command struct {
 	Name  string
 	Args  []string
 	Dir   string
-	Input string // stdin for non-interactive commands
+	Input string   // stdin for non-interactive commands
+	Env   []string // explicit overrides of the inherited host environment
 	// Interactive hands the terminal to the child (shell/exec sessions).
 	Interactive bool
 	// Quiet drops stdout/stderr; required for commands that daemonize
@@ -61,6 +62,9 @@ func (ProcessRunner) Run(ctx context.Context, c Command) (Result, error) {
 	}
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
+	if len(c.Env) > 0 {
+		cmd.Env = append(cmd.Environ(), c.Env...)
+	}
 	cmd.WaitDelay = 2 * time.Second
 
 	limit := c.Limit

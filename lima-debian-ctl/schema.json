@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lima Debian project configuration",
+  "description": "Schema v2: native Lima fields under lima; custom controller fields at the root. Runtime validation also checks filesystem safety, native defaults and overlapping mappings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "project", "portForwarding", "lima"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "project": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$"},
+    "instance": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$", "default": "devbox"},
+    "environment": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "description": "Custom host credential resolver. Values never enter Lima configuration.",
+      "properties": {
+        "resolver": {"type": ["array", "null"], "items": {"type": "string"}},
+        "timeoutSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 600, "default": 60}
+      }
+    },
+    "portForwarding": {
+      "type": "object", "additionalProperties": false, "required": ["backend"],
+      "properties": {"backend": {"enum": ["lima", "ssh", "none"], "description": "Required local-forward selector; no automatic fallback. Native and custom local rules are mutually exclusive."}}
+    },
+    "localTunnels": {"$ref": "#/$defs/tunnels"},
+    "reverseTunnels": {"$ref": "#/$defs/tunnels", "description": "Optional custom reverse TCP forwards; independent of the local backend."},
+    "lima": {
+      "type": "object", "additionalProperties": false, "required": ["mounts"],
+      "description": "Restricted native Lima subset. Names, nesting and native defaults are preserved, except containerd is forced off.",
+      "properties": {
+        "mounts": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["location", "mountPoint"],
+            "properties": {
+              "location": {"type": "string", "minLength": 1, "description": "Native mounts.location: absolute, config-relative or ~/ path. Templates, home/ancestor exposure and overlaps are rejected."},
+              "mountPoint": {"type": "string", "pattern": "^/work/.+", "description": "Native mounts.mountPoint: explicit clean path beneath /work/."},
+              "writable": {"type": ["boolean", "null"], "default": false}
+            }
+          }
+        },
+        "ssh": {
+          "type": ["object", "null"], "additionalProperties": false,
+          "properties": {"forwardAgent": {"type": ["boolean", "null"], "default": false, "description": "Native ssh.forwardAgent. No private keys are copied."}}
+        },
+        "mountInotify": {"type": ["boolean", "null"], "default": false, "description": "Native experimental writable-mount inotify forwarding."},
+        "containerd": {
+          "type": ["object", "null"], "additionalProperties": false,
+          "properties": {"system": {"enum": [false, null], "default": false}, "user": {"enum": [false, null], "default": false}}
+        },
+        "portForwards": {"type": ["array", "null"], "items": {"$ref": "#/$defs/nativeForward"}}
+      }
+    }
+  },
+  "$defs": {
+    "emptyList": {"type": ["array", "null"], "maxItems": 0},
+    "tunnels": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": {
+        "backend": {"enum": ["ssh", "none"]},
+        "forwards": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["listenPort", "targetPort"],
+            "properties": {
+              "listenPort": {"type": "integer", "minimum": 1024, "maximum": 65535},
+              "targetHost": {"type": ["string", "null"], "default": "127.0.0.1", "description": "Validated DNS name or IP address; targets may be privileged services."},
+              "targetPort": {"type": "integer", "minimum": 1, "maximum": 65535}
+            }
+          }
+        }
+      },
+      "if": {"required": ["forwards"], "properties": {"forwards": {"type": "array", "minItems": 1}}},
+      "then": {"required": ["backend"], "properties": {"backend": {"const": "ssh"}}}
+    },
+    "guestRange": {"type": ["array", "null"], "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1, "maximum": 65535, "not": {"const": 22}}},
+    "hostRange": {"type": ["array", "null"], "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1024, "maximum": 65535}},
+    "nativeForward": {
+      "type": "object", "additionalProperties": false,
+      "description": "Native TCP/UDP rules and equal-sized ordered ranges. No Unix sockets, reverse TCP, user ignore rules or privileged host listeners.",
+      "properties": {
+        "guestIP": {"type": ["string", "null"], "description": "Lima default is 127.0.0.1, or 0.0.0.0 when guestIPMustBeZero is true."},
+        "guestIPMustBeZero": {"type": ["boolean", "null"], "description": "Native matching flag; true requires guestIP 0.0.0.0."},
+        "guestPort": {"type": ["integer", "null"], "minimum": 0, "maximum": 65535, "not": {"const": 22}},
+        "guestPortRange": {"$ref": "#/$defs/guestRange"},
+        "hostIP": {"type": ["string", "null"], "default": "127.0.0.1", "description": "Must be an IP loopback address."},
+        "hostPort": {"anyOf": [{"const": 0}, {"type": "null"}, {"type": "integer", "minimum": 1024, "maximum": 65535}]},
+        "hostPortRange": {"$ref": "#/$defs/hostRange"},
+        "proto": {"enum": ["tcp", "udp", "any", "", null], "default": "any", "description": "Lima 2.3 defaults to any (TCP and UDP). Static rules must explicitly select tcp."},
+        "static": {"type": ["boolean", "null"], "default": false}
+      },
+      "if": {"required": ["static"], "properties": {"static": {"const": true}}},
+      "then": {"required": ["proto"], "properties": {"proto": {"const": "tcp"}}, "description": "Static forwarding requires explicit proto: tcp and one port. Multi-port ranges and overlaps with dynamic guest ports are rejected by runtime validation."}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"portForwarding": {"properties": {"backend": {"const": "lima"}}}}},
+      "then": {"properties": {"localTunnels": {"properties": {"forwards": {"$ref": "#/$defs/emptyList"}}}}}
+    },
+    {
+      "if": {"properties": {"portForwarding": {"properties": {"backend": {"const": "ssh"}}}}},
+      "then": {"properties": {"lima": {"properties": {"portForwards": {"$ref": "#/$defs/emptyList"}}}, "localTunnels": {"properties": {"backend": {"const": "ssh"}}}}}
+    },
+    {
+      "if": {"properties": {"portForwarding": {"properties": {"backend": {"const": "none"}}}}},
+      "then": {"properties": {"lima": {"properties": {"portForwards": {"$ref": "#/$defs/emptyList"}}}, "localTunnels": {"properties": {"forwards": {"$ref": "#/$defs/emptyList"}}}}}
+    }
+  ]
+}

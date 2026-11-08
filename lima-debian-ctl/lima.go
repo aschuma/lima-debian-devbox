@@ -28,6 +28,7 @@ type Instance struct {
 	Status        string         `json:"status"`
 	Dir           string         `json:"dir"`
 	SSHConfigFile string         `json:"sshConfigFile"`
+	SSHLocalPort  int            `json:"sshLocalPort"`
 	Protected     bool           `json:"protected"`
 	Config        instanceConfig `json:"config"`
 }
@@ -58,13 +59,19 @@ func (c instanceContainerd) disabled() bool { return !c.System && !c.User }
 // portForward mirrors the Lima rule fields needed to recognise the managed
 // "ignore everything" policy. Pointers distinguish "unset" from "false".
 type portForward struct {
-	GuestIP           string `json:"guestIP,omitempty"`
-	GuestIPMustBeZero *bool  `json:"guestIPMustBeZero,omitempty"`
-	GuestPort         int    `json:"guestPort,omitempty"`
-	GuestPortRange    []int  `json:"guestPortRange,omitempty"`
-	GuestSocket       string `json:"guestSocket,omitempty"`
-	Proto             string `json:"proto,omitempty"`
-	Ignore            bool   `json:"ignore,omitempty"`
+	GuestIP           string `yaml:"guestIP" json:"guestIP,omitempty"`
+	GuestIPMustBeZero *bool  `yaml:"guestIPMustBeZero" json:"guestIPMustBeZero,omitempty"`
+	GuestPort         int    `yaml:"guestPort" json:"guestPort,omitempty"`
+	GuestPortRange    []int  `yaml:"guestPortRange" json:"guestPortRange,omitempty"`
+	HostIP            string `yaml:"hostIP" json:"hostIP,omitempty"`
+	HostPort          int    `yaml:"hostPort" json:"hostPort,omitempty"`
+	HostPortRange     []int  `yaml:"hostPortRange" json:"hostPortRange,omitempty"`
+	Proto             string `yaml:"proto" json:"proto,omitempty"`
+	Static            bool   `yaml:"static" json:"static,omitempty"`
+	GuestSocket       string `yaml:"-" json:"guestSocket,omitempty"`
+	HostSocket        string `yaml:"-" json:"hostSocket,omitempty"`
+	Reverse           bool   `yaml:"-" json:"reverse,omitempty"`
+	Ignore            bool   `yaml:"-" json:"ignore,omitempty"`
 }
 
 // ignoreAllForwards disables Lima's automatic guest-port forwarding so only
@@ -92,7 +99,7 @@ func (p portForward) isIgnoreAll() bool {
 // inotify settings, and has Lima's containerd disabled.
 func (i Instance) matchesProject(c Config) bool {
 	return mountsEqual(i.Config.Mounts, c.Mounts) &&
-		len(i.Config.PortForwards) == 1 && i.Config.PortForwards[0].isIgnoreAll() &&
+		forwardPoliciesEqual(i.Config.PortForwards, c.forwardPolicy()) &&
 		i.Config.SSH.ForwardAgent == c.forwardAgent() &&
 		i.Config.MountInotify == c.mountInotify() &&
 		i.Config.Containerd.disabled()
@@ -156,13 +163,27 @@ func (l limaClient) Start(ctx context.Context, name string) error {
 	return l.run(ctx, "start", "--tty=false", name)
 }
 
+func (l limaClient) StartProject(ctx context.Context, c Config) error {
+	if c.Backend != Native {
+		return l.Start(ctx, c.Instance)
+	}
+	r, err := l.r.Run(ctx, Command{Name: "limactl", Args: []string{"start", "--tty=false", c.Instance}, Env: []string{"LIMA_SSH_PORT_FORWARDER=false"}})
+	if err != nil {
+		return fmt.Errorf("start native Lima forwarding: %w", err)
+	}
+	if r.Code != 0 {
+		return fmt.Errorf("limactl start exited with status %d: %s", r.Code, lastLimaMessage(r.Stderr))
+	}
+	return nil
+}
+
 // Edit replaces the instance's mounts and forwarding policy, sets SSH agent
 // forwarding and inotify forwarding from the project config, and disables
 // Lima's containerd. Lima refuses to edit a running instance, so callers stop
 // it first.
 func (l limaClient) Edit(ctx context.Context, c Config) error {
 	expr := ".mounts = " + jsonString(c.Mounts) +
-		" | .portForwards = " + jsonString(ignoreAllForwards()) +
+		" | .portForwards = " + jsonString(c.forwardPolicy()) +
 		" | .ssh.forwardAgent = " + strconv.FormatBool(c.forwardAgent()) +
 		" | .mountInotify = " + strconv.FormatBool(c.mountInotify()) +
 		" | .containerd.system = false | .containerd.user = false"
@@ -178,6 +199,9 @@ func (l limaClient) Protect(ctx context.Context, name string) error {
 
 // Discover returns the named instance from `limactl list --json`.
 func (l limaClient) Discover(ctx context.Context, name string) (Instance, error) {
+	if err := l.checkVersion(ctx); err != nil {
+		return Instance{}, err
+	}
 	text, err := run(ctx, l.r, Command{Name: "limactl", Args: []string{"list", "--json"}})
 	if err != nil {
 		return Instance{}, err
@@ -185,9 +209,10 @@ func (l limaClient) Discover(ctx context.Context, name string) (Instance, error)
 	dec := json.NewDecoder(strings.NewReader(text))
 	for {
 		var inst Instance
-		if err := dec.Decode(&inst); errors.Is(err, io.EOF) {
-			return Instance{}, fmt.Errorf("lima instance %q does not exist; create/provision it separately", name)
-		} else if err != nil {
+		if err := dec.Decode(&inst); err != nil {
+			if errors.Is(err, io.EOF) {
+				return Instance{}, fmt.Errorf("lima instance %q does not exist; create/provision it separately", name)
+			}
 			return Instance{}, fmt.Errorf("invalid Lima metadata: %w", err)
 		}
 		if inst.Name != name {

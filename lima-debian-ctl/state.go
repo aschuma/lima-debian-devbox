@@ -24,11 +24,14 @@ const (
 
 // State is the non-secret host-side record of the active project.
 type State struct {
-	Project    string `json:"project"`
-	Root       string `json:"root"`
-	ConfigHash string `json:"config_hash"`
-	Phase      Phase  `json:"phase"`
-	BootID     string `json:"boot_id,omitempty"`
+	Project         string  `json:"project"`
+	Root            string  `json:"root"`
+	ConfigHash      string  `json:"config_hash"`
+	Phase           Phase   `json:"phase"`
+	BootID          string  `json:"boot_id,omitempty"`
+	Backend         Backend `json:"forwarding_backend,omitempty"`
+	NativeTransport string  `json:"native_transport,omitempty"`
+	HostAgentPID    int     `json:"host_agent_pid,omitempty"`
 }
 
 // matches reports whether the state belongs to this project checkout.

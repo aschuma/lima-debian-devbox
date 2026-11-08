@@ -50,7 +50,7 @@ mountTypesUnsupported: [9p]
 mounts: []
 
 # Lima's automatic guest-port forwarding is off. Only the forwards declared in
-# a project's .devvm.toml are opened, by lima-debian-ctl over SSH. Lima's own
+# a project's .devvm.yaml are opened, by Lima or the controller's SSH backend. Lima's own
 # SSH port is not affected by this rule.
 portForwards:
   - guestIP: "0.0.0.0"
@@ -59,8 +59,8 @@ portForwards:
     ignore: true
 
 ssh:
-  # Agent forwarding is turned on by `lima-debian-ctl activate` (forward_agent
-  # defaults to true). It stays off in the template on purpose: Lima 2.2.1
+  # Agent forwarding is turned on by `lima-debian-ctl activate` only when
+  # lima.ssh.forwardAgent is explicitly true (native default false). It stays off in the template on purpose: Lima 2.2.1
   # links the agent socket before /run/host-services exists, which marks a
   # fresh start as degraded. Provisioning installs a tmpfiles.d workaround;
   # after that the controller enables forwarding safely.
@@ -69,7 +69,7 @@ ssh:
   loadDotSSHPubKeys: false
 
 # Host-to-guest inotify forwarding is experimental in Lima and opt-in per
-# project (mount_inotify in .devvm.toml). Off at creation.
+# project (lima.mountInotify in .devvm.yaml). Off at creation.
 mountInotify: false
 
 # The guest runs Docker CE, installed by lima-debian-provision. Lima's own

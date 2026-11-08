@@ -99,7 +99,7 @@ guest to refresh them.
 The loaders and the helper also export
 `SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock` when that socket exists. The
 socket exists when the controller has enabled Lima's agent forwarding
-(`forward_agent` in `.devvm.toml`, default on). No private keys are installed
+(`lima.ssh.forwardAgent` in `.devvm.yaml`, default off). No private keys are installed
 in the guest.
 
 The role also installs `/etc/tmpfiles.d/lima-host-services.conf`. It works

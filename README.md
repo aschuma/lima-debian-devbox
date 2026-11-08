@@ -39,8 +39,8 @@ credentials for the active project needs no restart.
 home. Login shells load that file. A systemd unit deletes it at shutdown.
 
 **SSH** inside the guest uses your host SSH agent through Lima's agent
-forwarding. No private key is copied into the VM. This is on by default and
-can be turned off per project with `forward_agent = false`.
+forwarding. No private key is copied into the VM. This is off by default;
+enable it with `lima.ssh.forwardAgent: true` in `.devvm.yaml`.
 
 **Project tooling** such as `mise.toml` is yours to run. The controller does
 not touch it.
@@ -57,7 +57,7 @@ limactl start devbox
 just install                                  # builds lima-debian-ctl
 
 cd ~/Projects/service-a
-lima-debian-ctl init                          # writes .devvm.toml
+lima-debian-ctl init                          # writes .devvm.yaml
 lima-debian-ctl activate
 lima-debian-ctl shell
 ```

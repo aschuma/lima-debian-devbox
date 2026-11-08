@@ -19,7 +19,8 @@ This guide takes you from an empty Lima VM to a working project shell.
   creates such a user by default. This guide calls it `aschuma`.
 
 If your names differ, set `LIMA_INSTANCE` and `LIMA_USER` for provisioning.
-The CLI reads the instance name from each project's `.devvm.toml`.
+The CLI reads the instance name from each project's `.devvm.yaml`.
+The controller requires Lima 2.3.0 or newer.
 
 ## 1. Host tools
 
@@ -28,7 +29,8 @@ brew install lima go ansible just
 limactl list            # devbox should be Running
 ```
 
-Go 1.23+ is only needed to build the CLI. `shellcheck` and `uv` are optional,
+Go 1.26+ is only needed to build the CLI. Native forwarding checks also use
+host `ps` and `lsof`. `shellcheck` and `uv` are optional,
 for `just lint`.
 
 ## 2. Provision the guest
@@ -74,26 +76,31 @@ cd ~/Projects/service-a
 lima-debian-ctl init
 ```
 
-This writes `.devvm.toml`. Edit it:
+This writes `.devvm.yaml`. Only the new YAML format is supported. Edit it:
 
-```toml
-schema_version = 1
-project = "service-a"
-instance = "devbox"
+```yaml
+schemaVersion: 2
+project: service-a
+instance: devbox
+portForwarding:
+  backend: none
 
-[[mounts]]
-host = "."
-guest = "/work/service-a"
-writable = true
+environment:
+  resolver: ["./scripts/dev-env"] # prints KEY=value lines
+  timeoutSeconds: 60
 
-[[mounts]]                       # optional, one more folder
-host = "../shared-lib"
-guest = "/work/shared-lib"
-writable = false
-
-[environment]
-resolver = ["./scripts/dev-env"] # prints KEY=value lines
-timeout_seconds = 60
+lima:
+  mounts:
+    - location: "."
+      mountPoint: /work/service-a
+      writable: true
+    - location: "../shared-lib" # optional; directory must exist
+      mountPoint: /work/shared-lib
+      writable: false
+  ssh:
+    forwardAgent: true
+  mountInotify: false
+  portForwards: []
 ```
 
 **Credentials.** The resolver is any program. It runs on the host, in the
@@ -103,20 +110,22 @@ the value is everything after the first `=`, as is. A typical resolver reads a
 1Password item or an encrypted file. Unlock it first; the script cannot
 prompt. Leave `resolver` out if the project has no secrets.
 
-**SSH.** `git` and `ssh` in the guest use your host SSH agent. Lima forwards
-the agent into the VM; no private key is copied. This is on by default. To
-turn it off for a project, add `forward_agent = false` at the top of
-`.devvm.toml`. Keep your agent unlocked on the host.
+**SSH.** Set `lima.ssh.forwardAgent: true`, as above, to let guest `git` and
+`ssh` use your host agent. No private key is copied. The native default is false;
+keep your agent unlocked on the host when enabling forwarding.
 
 **File watching.** Optionally, edits you save on the Mac can raise inotify
 events inside the VM, so the IDE backend and build watchers notice them. Add
-`mount_inotify = true` at the top of `.devvm.toml` to turn it on. It is off by
+`mountInotify: true` inside `lima` to turn it on. It is off by
 default because Lima marks the feature experimental.
 
-Details: [SSH agent](lima-debian-ctl/README.md#ssh-agent),
+Details: [SSH agent and credentials](lima-debian-ctl/README.md#credentials-and-guest-sessions),
 [port forwards](lima-debian-ctl/README.md#forwards).
 
-Commit `.devvm.toml`. It contains no secrets.
+Commit `.devvm.yaml`. It contains no secrets. Choose `portForwarding.backend`
+explicitly: `lima` for native TCP/UDP/ranges, `ssh` for individual custom TCP,
+or `none`. Reverse SSH is independently optional. See the
+[variant examples](lima-debian-ctl/README.md#forwards).
 
 ## 5. Work
 
@@ -128,7 +137,7 @@ lima-debian-ctl exec -- ./gradlew test
 ```
 
 Activation replaces the VM's mounts with the project's. It also turns off
-Lima's automatic port forwarding; only the forwards in `.devvm.toml` are
+Lima's automatic port forwarding; only the forwards in `.devvm.yaml` are
 opened. If the VM is running with other mounts, it is stopped and started
 again (about 15 s). Anything running in the VM dies with it.
 
@@ -159,5 +168,8 @@ If `activate` fails halfway, `status` says why. Fix the cause and run
 `activate` again. Nothing is marked ready until mounts, env and tunnels all
 check out.
 
-After editing `.devvm.toml`, run `activate`, not `provision`. It restarts the
-VM only if the mounts, `forward_agent` or `mount_inotify` changed.
+After editing `.devvm.yaml`, run `activate`, not `provision`. Native settings,
+native forwarding rules and backend switches require a restart; custom-only
+TCP rule changes can avoid one. Dynamic native rules without running applications
+report waiting rather than failing readiness. A failed native activation may stop
+the VM to close exposure.

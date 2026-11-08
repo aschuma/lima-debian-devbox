@@ -1,0 +1,56 @@
+---
+# Native dynamic TCP/UDP/ranges, static TCP, and optional custom reverse TCP.
+# Paths are relative to this file; adjust location for your project.
+schemaVersion: 2
+project: service-a
+instance: devbox
+portForwarding:
+  backend: lima
+
+# environment:
+#   resolver: ["./scripts/dev-env"]
+#   timeoutSeconds: 60
+
+reverseTunnels:
+  backend: ssh
+  forwards:
+    - listenPort: 1080
+      targetHost: 127.0.0.1
+      targetPort: 1080
+
+# Alternative local SSH forward: switch backend to ssh and remove native rules.
+# localTunnels:
+#   backend: ssh
+#   forwards:
+#     - listenPort: 8080
+#       targetHost: 127.0.0.1
+#       targetPort: 3000
+
+lima:
+  mounts:
+    - location: "."
+      mountPoint: /work/service-a
+      writable: true
+  ssh:
+    forwardAgent: true
+  mountInotify: false
+  containerd:
+    system: false
+    user: false
+  portForwards:
+    - guestPort: 3000
+      hostPort: 8080
+      proto: tcp
+      static: false
+    - guestPort: 5353
+      hostPort: 15353
+      proto: udp
+      static: false
+    - guestPortRange: [4000, 4003]
+      hostPortRange: [14000, 14003]
+      proto: any
+      static: false
+    - guestPort: 443
+      hostPort: 8443
+      proto: tcp
+      static: true

@@ -12,17 +12,19 @@ import (
 )
 
 type fakeMachine struct {
-	inst               Instance
-	calls              []Command
-	project            string
-	payload            string
-	failProvision      bool
-	failResolver       bool
-	failHelper         bool
-	brokenLoader       bool
-	guestPortBusy      bool
-	agentSocketMissing bool
-	boot               string
+	inst                 Instance
+	calls                []Command
+	project              string
+	payload              string
+	failProvision        bool
+	failResolver         bool
+	failHelper           bool
+	brokenLoader         bool
+	guestPortBusy        bool
+	agentSocketMissing   bool
+	boot                 string
+	nativeGuestListeners string
+	nativeHostListeners  string
 }
 
 // activate computes one reconciliation and applies it, like the CLI does.
@@ -38,6 +40,12 @@ func activate(t *testing.T, a Controller, ctx context.Context, c Config, approve
 func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 	f.calls = append(f.calls, c)
 	var err error
+	if c.Name == "ps" {
+		return Result{Stdout: "limactl\n"}, nil
+	}
+	if c.Name == "lsof" {
+		return Result{Stdout: f.nativeHostListeners}, nil
+	}
 	if c.Name == "resolver" {
 		if f.failResolver {
 			return Result{Code: 1, Stderr: "SECRET=never-log"}, nil
@@ -46,11 +54,14 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 	}
 	if c.Name == "limactl" {
 		switch c.Args[0] {
+		case "--version":
+			return Result{Stdout: "limactl version 2.3.0\n"}, nil
 		case "list":
 			return Result{Stdout: jsonString(f.inst) + "\n"}, nil
 		case "stop":
 			f.inst.Status = "Stopped"
 			f.project = ""
+			f.payload = "" // model orderly systemd credential cleanup
 			return Result{}, nil
 		case "start":
 			f.inst.Status = "Running"
@@ -87,6 +98,7 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 			if err := json.Unmarshal([]byte(mounts), &f.inst.Config.Mounts); err != nil {
 				return Result{}, err
 			}
+			f.inst.Config.PortForwards = nil
 			if err := json.Unmarshal([]byte(forwards), &f.inst.Config.PortForwards); err != nil {
 				return Result{}, err
 			}
@@ -98,7 +110,7 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 		// Tunnel master: start (-M) and control queries (-O check/exit) succeed.
 		for _, arg := range c.Args {
 			if arg == "-M" || arg == "-O" {
-				return Result{}, nil
+				return Result{Stderr: "Master running (pid=6001)"}, nil
 			}
 		}
 		switch {
@@ -135,6 +147,8 @@ func (f *fakeMachine) Run(_ context.Context, c Command) (Result, error) {
 				return Result{Stdout: "\n"}, nil
 			}
 			return Result{Stdout: f.project + "\n"}, nil
+		case strings.Contains(remote, "/usr/bin/ss -Hlnut"):
+			return Result{Stdout: f.nativeGuestListeners}, nil
 		case strings.Contains(remote, "/usr/bin/ss "):
 			if f.guestPortBusy {
 				return Result{Code: 1}, nil
@@ -157,6 +171,7 @@ func testController(t *testing.T) (Controller, Config, *fakeMachine) {
 	t.Helper()
 	c := testConfig(t, "project-a")
 	c.Environment.Resolver = []string{"resolver"}
+	c.ForwardAgent = true
 	dir := filepath.Join(t.TempDir(), "instance")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -186,7 +201,7 @@ func TestActivationRequiresApprovalBeforeResolverOrMutation(t *testing.T) {
 		t.Fatal("activation without approval succeeded")
 	}
 	for _, call := range f.calls {
-		if call.Name != "limactl" || call.Args[0] != "list" {
+		if call.Name != "limactl" || (call.Args[0] != "list" && call.Args[0] != "--version") {
 			t.Fatal("performed work before approval")
 		}
 	}
@@ -307,7 +322,7 @@ func TestPlanDoesNotExecuteResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, call := range f.calls {
-		if call.Name != "limactl" || call.Args[0] != "list" {
+		if call.Name != "limactl" || (call.Args[0] != "list" && call.Args[0] != "--version") {
 			t.Fatal("plan executed a mutation or resolver")
 		}
 	}
@@ -429,8 +444,7 @@ func TestMountInotifyDefaultsOffAndIsDrift(t *testing.T) {
 	if err != nil || s.MountInotify.Wanted || s.MountInotify.Enabled {
 		t.Fatalf("status does not report inotify off: %+v %v", s.MountInotify, err)
 	}
-	on := true
-	c.MountInotify = &on
+	c.MountInotify = true
 	rec, err := a.plan(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -475,17 +489,18 @@ func TestActivateProtectsInstanceOnce(t *testing.T) {
 	}
 }
 
-func TestForwardAgentDefaultsOnAndIsApplied(t *testing.T) {
+func TestForwardAgentDefaultsOffAndIsApplied(t *testing.T) {
 	a, c, f := testController(t)
+	c.ForwardAgent = false
 	ctx := context.Background()
-	if !c.forwardAgent() {
-		t.Fatal("forward_agent must default to true when unset")
+	if c.forwardAgent() {
+		t.Fatal("forwardAgent must default to false when unset")
 	}
 	if _, err := activate(t, a, ctx, c, true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.inst.Config.SSH.ForwardAgent {
-		t.Fatal("activate did not enable ssh.forwardAgent on the instance")
+	if f.inst.Config.SSH.ForwardAgent {
+		t.Fatal("activate unexpectedly enabled ssh.forwardAgent")
 	}
 	// No private key material may ever be sent to the guest.
 	for _, call := range f.calls {
@@ -503,8 +518,7 @@ func TestForwardAgentOffForcesEditAndRestart(t *testing.T) {
 	}
 	stops := countCalls(f, "limactl", "stop")
 	// Flipping the flag is config drift: the VM must be edited again.
-	off := false
-	c.ForwardAgent = &off
+	c.ForwardAgent = false
 	rec, err := a.plan(ctx, c)
 	if err != nil {
 		t.Fatal(err)
@@ -520,11 +534,11 @@ func TestForwardAgentOffForcesEditAndRestart(t *testing.T) {
 	}
 }
 
-func TestForwardAgentParsedFromTOML(t *testing.T) {
+func TestForwardAgentParsedFromYAML(t *testing.T) {
 	c := testConfig(t, "p")
-	base := "schema_version=1\nproject='p'\n"
-	mounts := "[[mounts]]\nhost='.'\nguest='/work/p'\nwritable=true\n"
-	for text, want := range map[string]bool{base + mounts: true, base + "forward_agent=false\n" + mounts: false, base + "forward_agent=true\n" + mounts: true} {
+	base := "schemaVersion: 2\nproject: p\nportForwarding: {backend: none}\nlima:\n"
+	mounts := "  mounts:\n    - location: .\n      mountPoint: /work/p\n      writable: true\n"
+	for text, want := range map[string]bool{base + mounts: false, base + "  ssh: {forwardAgent: false}\n" + mounts: false, base + "  ssh: {forwardAgent: true}\n" + mounts: true} {
 		if err := os.WriteFile(c.File, []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -532,11 +546,11 @@ func TestForwardAgentParsedFromTOML(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.ForwardAgent == nil || *got.ForwardAgent != want || got.forwardAgent() != want {
+		if got.ForwardAgent != want || got.forwardAgent() != want {
 			t.Fatalf("forward_agent parsed wrong for %q: %v", text, got.ForwardAgent)
 		}
 	}
-	if err := os.WriteFile(c.File, []byte(base+mounts+"[[ssh_keys]]\nsource='~/.ssh/id'\n"), 0600); err != nil {
+	if err := os.WriteFile(c.File, []byte(base+mounts+"ssh_keys: [{source: '~/.ssh/id'}]\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadConfig(c.File); err == nil {

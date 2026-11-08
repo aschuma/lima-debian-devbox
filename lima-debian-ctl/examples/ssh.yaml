@@ -1,0 +1,31 @@
+---
+# Custom individual TCP forwards. No UDP, ranges or Unix sockets.
+schemaVersion: 2
+project: service-a
+instance: devbox
+portForwarding:
+  backend: ssh
+
+localTunnels:
+  backend: ssh
+  forwards:
+    - listenPort: 8080
+      targetHost: 127.0.0.1
+      targetPort: 3000
+
+# Reverse SSH is independent of the selected local backend.
+reverseTunnels:
+  backend: ssh
+  forwards:
+    - listenPort: 1080
+      targetHost: 127.0.0.1
+      targetPort: 1080
+
+lima:
+  mounts:
+    - location: "."
+      mountPoint: /work/service-a
+      writable: true
+  ssh:
+    forwardAgent: true
+  portForwards: []

@@ -1,0 +1,22 @@
+---
+# No project local forwards. Lima's automatic fallback remains disabled.
+schemaVersion: 2
+project: service-a
+instance: devbox
+portForwarding:
+  backend: none
+
+# Uncomment for reverse-only operation.
+# reverseTunnels:
+#   backend: ssh
+#   forwards:
+#     - listenPort: 1080
+#       targetHost: 127.0.0.1
+#       targetPort: 1080
+
+lima:
+  mounts:
+    - location: "."
+      mountPoint: /work/service-a
+      writable: true
+  portForwards: []

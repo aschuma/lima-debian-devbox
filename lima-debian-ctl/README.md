@@ -1,249 +1,240 @@
 # lima-debian-ctl
 
-The daily-use CLI for the shared Lima dev VM. It points the VM at one project
-at a time. That project's folders become the only mounts, its credentials the
-only environment, and its forwards the only open tunnels. Tools, caches and
-Docker images on the VM disk survive a switch.
-
-It works together with [`lima-debian-provision`](../lima-debian-provision/README.md),
-which prepares the VM once. The controller assumes the VM exists and has been
-provisioned. See the [top-level README](../README.md) for the overall picture.
+The daily CLI for one shared Lima development VM. Activating a project replaces
+its mounts, credentials and forwarding policy. Tools, caches and Docker images
+on the VM disk survive a project switch.
 
 ## Install
 
-Go 1.23+ on a macOS or Linux host. The CLI talks to `limactl` and `ssh` as
-subprocesses. There is no daemon. Runtime dependencies: `go-toml/v2`, `x/sys`.
+Build with Go 1.26+. Runtime: **Lima 2.3.0+**, OpenSSH; native forwarding status
+also requires `ps` and `lsof` on the host. On Debian hosts install `lsof` if it
+is not present. Runtime Go dependencies are `go.yaml.in/yaml/v3` and `x/sys`.
+There is no controller daemon.
 
 ```bash
-go install .                 # → $(go env GOPATH)/bin; make sure that is on PATH
-./lima-debian-provision/provision.sh --tags project-session   # guest side, once
+just install
+./lima-debian-provision/provision.sh --tags project-session
 ```
 
-The Ansible tag installs `/usr/local/bin/lima-debian-ctl-guest`, shell loaders
-and a systemd unit in the guest. `activate` refuses to run against a VM that
-lacks them.
+The VM must already exist and be provisioned. The Ansible tag installs the
+helper, shell loaders and shutdown cleanup service. The controller never creates
+VMs or installs project mise tools.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
-| `init` | Write a `.devvm.toml` stub. Refuses to overwrite. |
-| `plan` | Show what `activate` would do. Reads only. Does not run the resolver. |
-| `activate` | Make this project the VM's active project. Asks before stopping the VM or replacing mounts. `--yes` skips the question. |
-| `provision` | Rerun the resolver and replace the env file. No restart. |
-| `status` | Ready or not, and why. Lists each forward with whether its listener is bound, the SSH agent and inotify state, Lima containerd off, and whether the instance is protected. |
-| `shell` | Login shell in the project directory. Shows a banner first. |
-| `exec -- CMD...` | Run a command in the project directory. Exit code is passed through. |
-| `deactivate`, `stop` | Delete the env file, close tunnels, stop the VM. |
+| `init` | Write `.devvm.yaml`; refuse to overwrite |
+| `plan` | Read-only plan, selected backends, normalized rules, generated native policy and restart reasons; never run the resolver |
+| `activate` | Apply project configuration; ask before takeover/edit/restart; `--yes` approves |
+| `provision` | Refresh credentials only; no backend changes or restart |
+| `status` | Project readiness, custom/native forwarding availability, agent/inotify/containerd/protection state |
+| `shell` | Project login shell with a non-secret banner |
+| `exec -- CMD...` | Project command; preserve its exit status |
+| `deactivate`, `stop` | Clear credentials, close custom tunnels and stop the VM |
 
-Flags come after the command: `activate --yes --json`. Results are printed as
-JSON. `--json` puts them on one line. Errors go to stderr. `shell` and `exec`
-have no `--json`.
+Flags follow the command: `activate --yes --json`. Non-session results are JSON,
+indented normally and compact with `--json`. Errors go to stderr. `shell`/`exec`
+use native terminal output and reject `--json`.
 
-`.devvm.toml` is found by walking up from the current directory. Or pass it
-with `--config`.
+Automatic discovery searches upward only for `.devvm.yaml`. `--config PATH`
+may select another YAML filename. **TOML is no longer supported**; no converter
+or compatibility loader is provided. Recreate existing configs using the examples.
 
-## .devvm.toml
+## Configuration
 
-One file per project. Commit it; it contains no secrets.
+```yaml
+schemaVersion: 2
+project: service-a
+instance: devbox
 
-```toml
-schema_version = 1
-project = "service-a"      # [A-Za-z0-9_-], used as the env marker
-instance = "devbox"        # Lima instance name
-forward_agent = true       # forward the host SSH agent; default true
-mount_inotify = false      # host edits raise inotify in the guest; default false
+portForwarding:
+  backend: lima
 
-[[mounts]]                 # first mount = working directory for shell/exec
-host = "."                 # relative to this file; symlinks resolved
-guest = "/work/service-a"  # must be under /work/
-writable = true
+environment:
+  resolver: ["./scripts/dev-env"]
+  timeoutSeconds: 60
 
-[environment]
-resolver = ["./scripts/dev-env"]   # argv; "./x" is relative to this file
-timeout_seconds = 60               # 1..600
+# Our optional reverse TCP tunnel (guest listener -> host target).
+reverseTunnels:
+  backend: ssh
+  forwards:
+    - listenPort: 1080
+      targetHost: 127.0.0.1
+      targetPort: 1080
 
-[[forwards]]
-direction = "guest-to-host"        # or host-to-guest
-listen_port = 1080                 # 1024..65535, binds 127.0.0.1
-target_host = "127.0.0.1"
-target_port = 1080
+lima:
+  mounts:
+    - location: "."
+      mountPoint: /work/service-a
+      writable: true
+  ssh:
+    forwardAgent: true
+  mountInotify: false
+  containerd:
+    system: false
+    user: false
+  portForwards:
+    - guestPort: 3000
+      hostPort: 8080
+      proto: tcp
+      static: false
 ```
 
-Top-level keys such as `forward_agent` must come before the first `[[...]]`
-table.
+Commit this file; it contains no credentials. The first mount is the shell/exec
+working directory. Host paths are config-relative, absolute or `~/...`; symlinks
+are resolved. Guest destinations must be clean paths beneath `/work/`. Host home
+and its ancestors, overlapping mounts and Go-template expressions are rejected.
+Unknown keys, scalar type coercion, extra YAML documents, anchors/aliases and
+unsupported tags are also rejected. Use true/false, not YAML 1.1 yes/no booleans. Configuration is bounded to 1 MiB.
 
-Rejected: unknown keys, mounts that overlap, mounts that would expose the host
-home or one of its parents, guest paths outside `/work/`, duplicate forward
-listeners. There is no global config file. Everything is per project.
+### Native attribute correspondence
 
-### Resolver
+Inside `lima`, names, nesting and types match the original Lima attributes.
+Outside it, attributes are controller customizations. Extracting `lima` gives a
+fragment, not a complete VM-creation template.
 
-The resolver provides the project's credentials. It runs on the host, in the
-project directory, with the host environment, no terminal and empty stdin. It
-is killed with its process group at the timeout. Example output:
+| Project path | Original Lima path | Default / restriction |
+| --- | --- | --- |
+| `lima.mounts[].location` | `mounts[].location` | Supported simple paths; no Go templates |
+| `lima.mounts[].mountPoint` | `mounts[].mountPoint` | Required, beneath `/work/` |
+| `lima.mounts[].writable` | `mounts[].writable` | false |
+| `lima.ssh.forwardAgent` | `ssh.forwardAgent` | false, matching Lima (changed from legacy TOML) |
+| `lima.mountInotify` | `mountInotify` | false; experimental |
+| `lima.containerd.system`, `.user` | `containerd.system`, `.user` | Forced false even when omitted/null; true rejected |
+| `lima.portForwards` | `portForwards` | Native IP/port/range/protocol/static rules only |
+| Root `environment`, `portForwarding`, `localTunnels`, `reverseTunnels` | None | Controller-owned |
 
-```text
-ARTIFACTORY_USER=alice
-ARTIFACTORY_TOKEN=abc=def
-EMPTY=
+Native fields omitted/null use built-in defaults, not the previous project's
+settings. Native `hostIP` defaults to loopback. `guestIP` defaults to loopback,
+or `0.0.0.0` with `guestIPMustBeZero: true`. Lima 2.3's runtime defaults `proto`
+to `any` (TCP and UDP), despite the default template's TCP comment; `static`
+defaults to false. Static rules must explicitly set `proto: tcp`. CPU/memory/disk, images, networks, native env/param/provision,
+additional SSH/mount-driver options and Unix socket fields are not accepted.
+The controller preserves unrelated existing VM settings.
+
+Use [`schema.json`](schema.json) for editor assistance. Files generated by `init`
+include its published URL; until a release publishes it, point your editor at the
+local schema. Runtime validation additionally checks paths, native range/default
+semantics and overlapping mappings.
+
+## Forwards
+
+Choose one explicit **local** backend:
+
+| `portForwarding.backend` | Active rules | Supported |
+| --- | --- | --- |
+| `lima` | `lima.portForwards` | Dynamic gRPC TCP/UDP/ranges; static individual TCP |
+| `ssh` | `localTunnels.forwards` with `backend: ssh` | Individual TCP via our dedicated `ssh -L` |
+| `none` | Neither | No local forwards; native auto-forward fallback still disabled |
+
+Native and custom local forwarding cannot coexist. Populated inactive rules are
+errors, not ignored alternatives. There is no automatic fallback. Reverse TCP
+is independently optional through `reverseTunnels.backend: ssh` (`ssh -R`).
+Omit that object or select `none` with no rules to disable it.
+
+**No Unix socket forwarding. No UDP/ranges with custom SSH. No UDP/any or
+multi-port ranges with native static forwarding.** TCP/UDP listeners bind only
+loopback and must be 1024–65535. Targets may be privileged where Lima permits.
+Native ranges have equal cardinality and no extra size cap; conflicting mappings
+are rejected. Static and dynamic rules cannot cover the same guest port, even
+with different protocols or guest IPs: Lima 2.3 suppresses dynamic forwarding
+by port when a static rule covers it. Lima's special SSH-port protection remains in effect.
+
+Examples: [`native.yaml`](examples/native.yaml) (UDP/ranges/static TCP),
+[`ssh.yaml`](examples/ssh.yaml) (custom local/reverse TCP),
+[`none.yaml`](examples/none.yaml) (none/reverse-only). Adjust mount paths when
+copying: relative locations resolve against the copied config's directory.
+
+Custom local alternative:
+
+```yaml
+portForwarding:
+  backend: ssh
+localTunnels:
+  backend: ssh
+  forwards:
+    - listenPort: 8080
+      targetHost: 127.0.0.1
+      targetPort: 3000
+lima:
+  # Include your mounts and other native settings here too.
+  portForwards: []
 ```
 
-Rules:
+The controller writes native allow rules followed by a catch-all ignore rule;
+custom/none modes write only the ignore rule. Native dynamic transport is
+explicitly set to gRPC, not inherited from `LIMA_SSH_PORT_FORWARDER`. Native
+static TCP uses Lima's SSH master. Custom forwarding uses a separate private
+master. Status inspects socket ownership with `lsof`, including UDP; a TCP
+connection to some process is not proof native forwarding owns the port.
 
-- One record per line. CR, LF or CRLF.
-- Blank lines, `#` comments and a leading `export ` are ignored. A plain
-  `.env` file works.
-- The key is a shell identifier. The value is the rest of the line, as is.
-  Quotes are kept. Nothing is interpolated.
-- A name that appears twice takes its last value.
-- Bad names, NUL bytes, non-UTF-8 and output over 1 MiB are errors.
-- Reserved: `HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, the read-only
-  bash/zsh variables, and anything starting with `LIMA_DEBIAN_CTL_`.
+Readiness is **not application health**. A dynamic rule without a guest service
+reports `waiting for guest listener` without failing activation. Static/custom
+listeners must be established, but targets need not be running. Native activation
+allows a short discovery/bind settling period; occupied/missing listeners fail.
+This exposure policy is not full network isolation: `host.lima.internal` can
+still make host services reachable from the guest.
 
-On error the existing env file is left alone and no output is echoed.
+## Credentials and guest sessions
 
-The resolver is code you run. Read it before activating someone else's project.
+The resolver runs on the host in the config directory, with inherited host env,
+empty stdin and no terminal. Timeout is 1–600 seconds (default 60); cancellation
+kills its process group. Output is bounded to 1 MiB, UTF-8 and NUL-free.
 
-### SSH agent
+Records are literal `KEY=value`, separated by CR/LF/CRLF. Blank lines, comments
+and a leading `export ` are accepted; duplicate keys take the last value. Quotes
+are kept and nothing is interpolated. Names must be shell identifiers. Reserved:
+`HOME`, `BASH_ENV`, `ENV`, `ZDOTDIR`, `IFS`, protected bash/zsh variables and the
+`LIMA_DEBIAN_CTL_` prefix. Failures never echo output or replace existing credentials.
 
-No private key is ever copied into the guest. Instead, Lima forwards your host
-SSH agent into the VM.
+The resolver is host code: review it before activating someone else's project.
 
-With `forward_agent = true` (the default), `activate` sets Lima's
-`ssh.forwardAgent` on the instance. The agent then appears in the guest at
-`/run/host-services/ssh-auth.sock`. The guest shell loader and the
-`exec`/`shell` helper export `SSH_AUTH_SOCK` to that socket when it exists. So
-`git` and `ssh` sign with your host keys. The key material stays on the host.
-A compromised guest could use the agent while connected, but never read the
-keys. Keep the agent unlocked on the host.
+Values are safely quoted and streamed to a guest `0600` environment file using
+atomic rename. Login shells and the explicit session helper load it; the helper
+verifies the project marker and changes to the first mount. Existing processes
+retain old credentials until restarted. SSH-agent forwarding, when explicitly
+enabled, uses `/run/host-services/ssh-auth.sock`; no private keys are copied.
 
-`forward_agent` is part of the VM configuration. Changing it is drift, like a
-mount change: `plan` reports an edit, and `activate` stops, edits and starts
-the VM to apply it. With `forward_agent = false` the guest sees no socket and
-leaves `SSH_AUTH_SOCK` unset.
+Systemd removes environment/banner on orderly shutdown and boot. Hard stops can
+leave credentials on disk until next boot. They are not shredded; snapshots can
+retain them. Resolver secrets never enter Lima YAML, cidata, backups or host state.
+IntelliJ Remote Development still needs separate real-workflow verification.
 
-Older versions had a `[[ssh_keys]]` table that copied private keys into the
-guest. It is gone and is rejected as an unknown key. Keys installed by an older
-version are not removed automatically. Delete them from the guest's `~/.ssh`
-by hand; the old manifest is `~/.config/lima-debian-ctl/ssh-keys`.
+## Activation, state and recovery
 
-### File watching
+Activation checks the Lima version and guest prerequisites, obtains approval,
+runs the resolver before disruption, backs up `lima.yaml`, protects the instance,
+and then closes custom tunnels and reconciles native configuration. Project/native
+changes restart the VM; custom-only rule changes need not. Matching native transport
+is tied to the controlled host-agent PID and guest boot ID; a manual VM/host-agent
+restart requires reactivation. Global Lima overrides that broaden effective
+mounts/forwarding are treated as drift, not silently adopted.
 
-Off by default. With `mount_inotify = true`, `activate` sets Lima's
-`mountInotify` on the instance. Lima then forwards inotify events from the
-host to the guest for writable mounts. An IDE backend or build watcher in the
-VM sees a file you saved on the Mac without polling.
+After upload, forwarding setup and helper/login-shell verification, state becomes
+ready. Failed mutations leave it incomplete, clear newly uploaded credentials,
+close custom tunnels and stop the VM if native forwarding could remain exposed.
+Cleanup errors are reported; previous credentials are not restored. If discovery
+fails or the VM status becomes unknown during cleanup, the controller attempts
+to stop it regardless of the selected backend. Last known connection metadata
+is retained after readiness failure. Validation or resolver failure before
+mutation leaves the old project intact.
 
-The setting is part of the VM configuration. Changing it is drift, like a
-mount change, and `activate` restarts the VM to apply it. It is opt-in
-because Lima marks the feature experimental. Turn it on per project when you
-want it; set it back to `false` and run `activate` if it misbehaves.
+Host state is under `${XDG_STATE_HOME:-~/.local/state}/lima-debian-ctl/<instance>/`:
+`state.json`, a nonblocking mutation lock and `lima-before-edit.yaml`. Control
+sockets remain under `~/.lima-debian-ctl/sockets/`. The selected backend is
+recorded in state so every backend switch triggers stop/edit/start, even when
+both native policies are identical. Older state without a backend requires
+reactivation. Config hashes are normalized;
+comments/formatting do not change readiness. State contains no credential values.
 
-### Protection
-
-The shared VM carries every installed tool and Docker image. On the first
-`activate` the controller runs `limactl protect` on the instance, so
-`limactl delete` refuses it until you run `limactl unprotect` yourself. Lima
-has no snapshots for VZ instances; the controller's `lima.yaml` backup (see
-[State](#state)) is the rollback point for configuration.
-
-### Lima containerd
-
-The guest uses Docker CE, installed by `lima-debian-provision`. Lima's own
-containerd (`containerd.user`, on by default in Lima, and `containerd.system`)
-is switched off by `activate`. With it on, every fresh `limactl start`
-downloads the nerdctl bundle from GitHub and aborts if that fails. This is not
-configurable per project; `status` reports it as `lima_containerd_disabled`,
-and re-enabling it by hand counts as drift.
-
-### Forwards
-
-`guest-to-host` is `ssh -R`: a port inside the VM reaches a service on the
-Mac, for example a SOCKS proxy or a local registry. `host-to-guest` is
-`ssh -L`: a port on the Mac reaches a service in the VM. Both listen on
-loopback only.
-
-Lima's own automatic forwarding of guest ports is switched off at takeover. A
-server you start in the VM is reachable from the Mac only if it is listed
-here. Lima's SSH port is not affected.
-
-## What activate does
-
-1. Reads `limactl list --json` and the saved state. Decides whether an edit or
-   restart is needed. If the VM is running, checks that the guest helpers are
-   installed.
-2. Runs the resolver on the host. A failure here changes nothing.
-3. Backs up `lima.yaml` to the state directory. Protects the instance if it
-   is not protected yet.
-4. Closes the previous project's tunnels. If a restart is needed: deletes the
-   old env file, runs `limactl stop`, then `limactl edit --set` with the
-   mounts, the forwarding policy, `ssh.forwardAgent`, `mountInotify` and
-   `containerd` off, then `limactl start`, and waits for SSH.
-5. Uploads the env file (`0600`, atomic rename) to
-   `~/.config/lima-debian-ctl/environment.sh` in the guest. Uploads a banner
-   with the project, mounts, forwards, variable *names* and the agent state.
-6. Opens the tunnels on a private control socket. `-L` failures abort via
-   `ExitOnForwardFailure`. `-R` listeners are checked with `ss` on the guest,
-   because sshd only warns when a bind fails.
-7. Checks the project marker through the helper and through `bash -lc`. A
-   broken loader shows up now, not later in the IDE.
-8. Writes `phase: ready` with the guest boot ID.
-
-Same project and the VM already matches: step 4 only closes tunnels. No
-restart. Different project, changed mounts, changed `forward_agent` or changed
-`mount_inotify`: always a restart, so no process from the previous project
-survives.
-
-On any failure the phase is `incomplete`. Tunnels are closed and a freshly
-uploaded env file is removed. The previous project's credentials are not
-restored. Run `plan`, fix the cause, run `activate` again.
-
-## Guest side
-
-The env file is loaded by:
-
-- `/etc/profile.d/lima-debian-ctl.sh` for login shells,
-- `~/.bashrc`, before the interactive-only return,
-- `/etc/zsh/zshenv` for zsh.
-
-`exec` and `shell` go through the guest helper. It sources the file itself,
-checks the project marker and changes to the first mount. It does not depend
-on shell startup files.
-
-`lima-debian-ctl-session.service` deletes the env file and the banner on clean
-shutdown and on boot. A hard stop can leave them on disk until the next boot.
-They are on the guest disk by design. They are not shredded; snapshots keep
-them.
-
-Changing the env file does not change running processes. Restart your IDE
-backend or Gradle daemon after `provision`.
-
-`shell`, and `exec` with a terminal on stdin, allocate a remote TTY. Ctrl-C
-then reaches the remote command.
-
-## State
-
-`${XDG_STATE_HOME:-~/.local/state}/lima-debian-ctl/<instance>/` holds:
-
-- `state.json` — project, phase, boot ID, config hash. No values.
-- the lock file,
-- `lima-before-edit.yaml` — the backup from step 3.
-
-Control sockets are in `~/.lima-debian-ctl/sockets/`.
-
-Readiness is tied to the config hash and the guest boot ID. If you edit
-`.devvm.toml` or restart the VM by hand, `exec` and `provision` ask you to
-`activate` again. Mutating commands take a non-blocking lock per instance.
-
-## Testing
+## Tests
 
 ```bash
-go test -race -cover ./...
-go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+just test
 ```
 
-Tests drive the controller against a fake `limactl` and `ssh`. The real-VM
-scenarios were run by hand on Lima 2.2.1: takeover, switch, refresh,
-deactivate, cleanup after a plain `limactl stop`, `-R` traffic, bash and zsh
-loading. IntelliJ Remote Development has not been exercised yet.
+Tests use fake Lima/SSH/host socket observations and real local shell subprocesses.
+The new native UDP/range/static behavior has **not been smoke-tested on a real VM**.
+Such tests start/stop/edit the VM and require separate approval. Design/source notes:
+[`lima-yaml-project-config.md`](../docs/research/lima-yaml-project-config.md).

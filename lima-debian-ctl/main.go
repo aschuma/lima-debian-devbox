@@ -24,7 +24,7 @@ const (
 const usage = `Usage: lima-debian-ctl COMMAND [--config FILE] [--json] [--yes] [-- COMMAND...]
 
 Commands:
-  init        write a .devvm.toml stub in the current directory
+  init        write a .devvm.yaml stub in the current directory
   plan        show what activate would change (no VM changes, no resolver run)
   activate    make this project the VM's active project (may stop/restart it)
   provision   refresh this project's environment without restarting
@@ -34,7 +34,7 @@ Commands:
   deactivate  remove credentials and tunnels, then stop the VM
   stop        alias of deactivate
 
-Configuration is .devvm.toml, searched upward from the current directory.
+Configuration is .devvm.yaml, searched upward from the current directory.
 Project mise setup is never run.
 `
 
@@ -239,40 +239,58 @@ func (k *cli) stop() (int, error) {
 	return k.emit(state)
 }
 
-const configTemplate = `schema_version = 1
-project = %s
-instance = %q
+const configTemplate = `# yaml-language-server: $schema=https://raw.githubusercontent.com/aschuma/lima-debian-devbox/main/lima-debian-ctl/schema.json
+schemaVersion: 2
+project: %s
+instance: %q
 
-# SSH: the host agent is forwarded into the guest (Lima ssh.forwardAgent), so
-# git/ssh use host keys and no private key is written to the VM. Default true.
-# Keep this above the first [[...]] table.
-#forward_agent = true
+# Choose lima (native TCP/UDP/ranges), ssh (individual TCP), or none.
+portForwarding:
+  backend: none
 
-# File watching: host edits on writable mounts raise inotify events in the
-# guest (Lima mountInotify), so IDE and build watchers react. Experimental in
-# Lima; off unless you set it.
-#mount_inotify = true
+# Credentials: host argv printing literal KEY=value lines.
+# environment:
+#   resolver: ["./scripts/dev-env"]
+#   timeoutSeconds: %d
 
-[[mounts]]
-host = "."
-guest = %s
-writable = true
+# Custom local forward (ssh -L): select backend: ssh to enable.
+# localTunnels:
+#   backend: ssh
+#   forwards:
+#     - listenPort: 8080
+#       targetHost: 127.0.0.1
+#       targetPort: 3000
 
-# Credentials: a host program that prints KEY=value lines (.env style).
-# It runs in this directory without a terminal.
-#[environment]
-#resolver = ["cat", "./env.1p"]
-#timeout_seconds = %d
+# Reverse forward (ssh -R), independent of the local backend.
+# reverseTunnels:
+#   backend: ssh
+#   forwards:
+#     - listenPort: 1080
+#       targetHost: 127.0.0.1
+#       targetPort: 1080
 
-# Tunnels, loopback only. guest-to-host = ssh -R, host-to-guest = ssh -L.
-#[[forwards]]
-#direction = "guest-to-host"
-#listen_port = 1080
-#target_host = "127.0.0.1"
-#target_port = 1080
+# Original Lima attribute names. Unsupported fields are rejected.
+lima:
+  mounts:
+    - location: "."
+      mountPoint: %s
+      writable: true
+  ssh:
+    forwardAgent: false
+  mountInotify: false
+  containerd:
+    system: false
+    user: false
+  portForwards: []
+  # Native alternative: select backend: lima and replace portForwards above.
+  # portForwards:
+  #   - guestPort: 3000
+  #     hostPort: 8080
+  #     proto: tcp
+  #     static: false
 `
 
-// initConfig writes a fresh .devvm.toml and refuses to overwrite one.
+// initConfig writes a fresh .devvm.yaml and refuses to overwrite one.
 func initConfig(filename string, out io.Writer) error {
 	if filename == "" {
 		filename = configName
@@ -285,7 +303,7 @@ func initConfig(filename string, out io.Writer) error {
 	if !identifier.MatchString(name) {
 		name = "my-project"
 	}
-	text := fmt.Sprintf(configTemplate, jsonString(name), defaultInstance, jsonString(guestMountRoot+name), 180)
+	text := fmt.Sprintf(configTemplate, jsonString(name), defaultInstance, defaultTimeoutSecs, jsonString(guestMountRoot+name))
 	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err

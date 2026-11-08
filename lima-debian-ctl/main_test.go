@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pelletier/go-toml/v2"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestCLIInitAndValidation(t *testing.T) {
@@ -49,7 +49,12 @@ func TestCLIPlanActivateProvisionStatusStop(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	data, err := toml.Marshal(c)
+	p := projectFile{SchemaVersion: c.SchemaVersion, Project: c.Project, Instance: c.Instance}
+	p.Environment = environmentConfig{Resolver: c.Environment.Resolver, TimeoutSeconds: &c.Environment.TimeoutSeconds}
+	p.PortForwarding.Backend = c.Backend
+	p.Lima.Mounts = c.Mounts
+	p.Lima.SSH.ForwardAgent = c.forwardAgent()
+	data, err := yaml.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
 	}

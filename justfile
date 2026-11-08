@@ -7,7 +7,7 @@ root := justfile_directory()
 default:
     @just --list
 
-# Build the host controller (requires Go 1.23+)
+# Build the host controller (requires Go 1.26+)
 build:
     mkdir -p "{{root}}/lima-debian-ctl/bin"
     cd "{{root}}/lima-debian-ctl" && go build -o bin/lima-debian-ctl .
@@ -38,7 +38,7 @@ validate:
 # Shell, YAML, and Ansible lint (requires shellcheck and uv)
 lint:
     shellcheck "{{root}}/lima-debian-provision/provision.sh" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl-guest" "{{root}}/lima-debian-provision/roles/project_session/files/lima-debian-ctl.sh"
-    cd "{{root}}" && uvx --from yamllint yamllint .github .yamllint.yml devbox-lima-template.yml
+    cd "{{root}}" && uvx --from yamllint yamllint .github .yamllint.yml devbox-lima-template.yml lima-debian-ctl/examples
     cd "{{root}}" && limactl validate devbox-lima-template.yml
     cd "{{root}}/lima-debian-provision" && uvx --from yamllint yamllint .
     cd "{{root}}/lima-debian-provision" && uvx --from ansible-lint ansible-lint playbook.yml

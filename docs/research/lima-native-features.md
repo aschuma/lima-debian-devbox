@@ -2,6 +2,11 @@
 
 ## Scope
 
+This note records the earlier Lima 2.2.1/TOML implementation. The current
+controller uses `.devvm.yaml`, native names under `lima`, agent forwarding off
+by default, and selectable native/custom forwarding. See the
+[current design](lima-yaml-project-config.md) and controller README.
+
 This note surveys Lima configuration and CLI features that overlap with work
 `lima-debian-ctl/` and `lima-debian-provision/` currently do by hand, and
 records which of them are worth adopting. It is a design/decision record: it

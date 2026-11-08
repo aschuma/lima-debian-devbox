@@ -22,12 +22,12 @@ func testConfig(t *testing.T, name string) Config {
 	if err := os.Mkdir(project, 0700); err != nil {
 		t.Fatal(err)
 	}
-	c := Config{SchemaVersion: 1, Project: name, Instance: "devbox", Root: project, File: filepath.Join(project, configName), Mounts: []Mount{{Host: project, Guest: "/work/" + name, Writable: true}}, Environment: Environment{TimeoutSeconds: 60}}
+	c := Config{SchemaVersion: 2, Backend: SSH, Project: name, Instance: "devbox", Root: project, File: filepath.Join(project, configName), Mounts: []Mount{{Host: project, Guest: "/work/" + name, Writable: true}}, Environment: Environment{TimeoutSeconds: 60}}
 	return c
 }
 func TestConfigStrictAndRelative(t *testing.T) {
 	c := testConfig(t, "project")
-	text := "schema_version=1\nproject='project'\n[[mounts]]\nhost='.'\nguest='/work/project'\nwritable=true\n[environment]\nresolver=['./resolver']\n"
+	text := "schemaVersion: 2\nproject: project\nportForwarding:\n  backend: none\nlima:\n  mounts:\n    - location: .\n      mountPoint: /work/project\n      writable: true\nenvironment:\n  resolver: ['./resolver']\n"
 	if err := os.WriteFile(c.File, []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestConfigStrictAndRelative(t *testing.T) {
 	if got.Mounts[0].Host != c.Root || got.Environment.Resolver[0] != filepath.Join(c.Root, "resolver") || got.Instance != "devbox" {
 		t.Fatal("relative resolution/defaults incorrect")
 	}
-	if err := os.WriteFile(c.File, []byte("unknown=true\n"+text), 0600); err != nil {
+	if err := os.WriteFile(c.File, []byte("unknown: true\n"+text), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := loadConfig(c.File); err == nil {
